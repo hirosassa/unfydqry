@@ -30,16 +30,20 @@ target/
 core/generated/
 
 # -----------------------------------------------------------------------------
-# iOS / SwiftPM (Package.swift, Sources/, Tests/, SearchCore.xcframework live at repo root)
+# iOS / SwiftPM
+#   Package.swift lives at repo root, iOS sources / tests / xcframework under ios/
 # -----------------------------------------------------------------------------
 
 # XCFramework build artifact (re-creatable via xcodebuild -create-xcframework)
-/SearchCore.xcframework/
+ios/SearchCore.xcframework/
 
-# SwiftPM build / resolution artifacts
+# SwiftPM build / resolution artifacts (root from Package.swift)
 /.build/
 /Package.resolved
 /.swiftpm/
+# Some xcodebuild flows materialize these inside ios/ as well
+ios/.build/
+ios/.swiftpm/
 
 # Intermediate xcframework slice scratch space
 ios/build/
