@@ -159,4 +159,4 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## ライセンス
 
-未定。
+MIT ライセンス。[LICENSE](../LICENSE) を参照。

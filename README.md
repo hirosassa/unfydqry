@@ -163,4 +163,4 @@ normalization breaks both at once (the "golden tests" approach from §E.4 of the
 
 ## License
 
-TBD.
+MIT — see [LICENSE](LICENSE).
