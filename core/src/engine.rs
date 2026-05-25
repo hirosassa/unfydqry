@@ -84,8 +84,8 @@ impl SearchEngine {
 
         // trigram は3文字未満をマッチできない → LIKE フォールバック。
         if q.chars().count() < 3 {
-            let mut stmt = conn
-                .prepare("SELECT id FROM entries WHERE norm LIKE '%'||?1||'%' LIMIT ?2")?;
+            let mut stmt =
+                conn.prepare("SELECT id FROM entries WHERE norm LIKE '%'||?1||'%' LIMIT ?2")?;
             let rows = stmt.query_map(params![q, limit], |r| {
                 Ok(Hit {
                     id: r.get(0)?,
