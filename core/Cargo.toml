@@ -21,3 +21,8 @@ uniffi = { version = "0.28", features = ["cli"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 unicode-normalization = "0.1"
 thiserror = "1"
+
+[dev-dependencies]
+# Rust 側のコンフォーマンステスト(tests/conformance.rs)が ../spec/*.json を読むため。
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
