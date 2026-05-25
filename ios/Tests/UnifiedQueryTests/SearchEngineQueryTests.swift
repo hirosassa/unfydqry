@@ -2,114 +2,22 @@ import Foundation
 import Testing
 @testable import UnifiedQuery
 
-@Suite("SearchEngine query semantics")
+/// `SearchEngine` の **言語固有・非データ駋動** な性質をチェックする。
+///
+/// 入力→ヒット ID の素朴な対は `spec/search.json` と `SpecDrivenTests` 側に寄せて
+/// あるので、ここに残るのは:
+///   - score の sanity(LIKE 経路は 0、FTS5 経路は有限の非ゼロ)
+///   - 順序(bm25 昇順)
+///   - limit のカウント(どの ID が来るかは非決定)
+///   - 例外を出さないことの確認(FTS5 予約文字、空白だけのクエリ)
+///   - 並行検索(Mutex<Connection> 経由の直列化が落ちないこと)
+@Suite("SearchEngine query (native-only)")
 struct SearchEngineQueryTests {
     private func fresh() throws -> SearchEngine {
         try SearchEngine(dbPath: ":memory:")
     }
 
-    // MARK: - Normalization end-to-end (index/query 両側で同じ正規化が走る)
-
-    @Test func katakanaQueryHitsHiraganaDoc() throws {
-        let e = try fresh()
-        try e.index(id: 1, text: "とうきょうタワー")
-        let hits = try e.search(query: "トウキョウ", limit: 10)
-        #expect(hits.map(\.id) == [1])
-    }
-
-    @Test func hiraganaQueryHitsKanjiMixedDoc() throws {
-        let e = try fresh()
-        try e.index(id: 1, text: "東京 ﾄｳｷｮｳ タワー")
-        let hits = try e.search(query: "とうきょう", limit: 10)
-        #expect(hits.map(\.id) == [1])
-    }
-
-    @Test func halfwidthKatakanaQueryHitsFullwidthDoc() throws {
-        let e = try fresh()
-        try e.index(id: 1, text: "トウキョウ ドーム")
-        let hits = try e.search(query: "ﾄｳｷｮｳ", limit: 10)
-        #expect(hits.map(\.id) == [1])
-    }
-
-    @Test func fullwidthLatinHitsHalfwidthQuery() throws {
-        let e = try fresh()
-        try e.index(id: 1, text: "Ｐｙｔｈｏｎ 入門")
-        let hits = try e.search(query: "python", limit: 10)
-        #expect(hits.map(\.id) == [1])
-    }
-
-    @Test func uppercaseQueryHitsLowercaseDoc() throws {
-        let e = try fresh()
-        try e.index(id: 1, text: "hello world")
-        let hits = try e.search(query: "HELLO", limit: 10)
-        #expect(hits.map(\.id) == [1])
-    }
-
-    // MARK: - Dakuten distinction (検索段階でも区別される)
-
-    @Test func dakutenQueryDoesNotHitUnvoicedDoc() throws {
-        let e = try fresh()
-        try e.index(id: 1, text: "がっこうあるある")  // voiced
-        try e.index(id: 2, text: "かっこうあるある")  // unvoiced
-        let hits = try e.search(query: "がっこう", limit: 10)
-        #expect(hits.map(\.id) == [1])
-    }
-
-    @Test func unvoicedQueryDoesNotHitDakutenDoc() throws {
-        let e = try fresh()
-        try e.index(id: 1, text: "がっこうあるある")
-        try e.index(id: 2, text: "かっこうあるある")
-        let hits = try e.search(query: "かっこう", limit: 10)
-        #expect(hits.map(\.id) == [2])
-    }
-
-    // MARK: - Empty / trivial query
-
-    @Test func emptyQueryReturnsEmpty() throws {
-        let e = try fresh()
-        try e.index(id: 1, text: "anything")
-        #expect(try e.search(query: "", limit: 10).isEmpty)
-    }
-
-    @Test func whitespaceOnlyQueryReturnsEmpty() throws {
-        let e = try fresh()
-        try e.index(id: 1, text: "anything")
-        // " " は正規化後も1文字 → LIKE 経路だが空白マッチは無意味で原則ヒットしない。
-        // ヒットしてもエラーにならない(挙動の安定性のテスト)。
-        let hits = try e.search(query: " ", limit: 10)
-        #expect(hits.count >= 0)
-    }
-
-    // MARK: - LIKE fallback (1〜2 文字) vs FTS5 (3 文字以上)
-
-    @Test func oneCharQueryUsesLikeFallback() throws {
-        let e = try fresh()
-        try e.index(id: 1, text: "がっこう")
-        try e.index(id: 2, text: "かばん")
-        // 1文字 "が" は trigram では拾えないが LIKE で拾える。
-        let hits = try e.search(query: "が", limit: 10)
-        #expect(hits.map(\.id) == [1])
-    }
-
-    @Test func twoCharQueryUsesLikeFallback() throws {
-        let e = try fresh()
-        try e.index(id: 1, text: "がっこう")
-        try e.index(id: 2, text: "かばん")
-        let hits = try e.search(query: "がっ", limit: 10)
-        #expect(hits.map(\.id) == [1])
-    }
-
-    @Test func threeCharQueryUsesFTS5() throws {
-        let e = try fresh()
-        try e.index(id: 1, text: "がっこう")
-        let hits = try e.search(query: "がっこ", limit: 10)
-        #expect(hits.map(\.id) == [1])
-        // FTS5 経路は bm25 のスコアを返す。score は負値で良適合ほど小さい。
-        if let first = hits.first {
-            #expect(first.score != 0.0)
-            #expect(first.score.isFinite)
-        }
-    }
+    // MARK: - Score sanity
 
     @Test func likeFallbackReturnsZeroScore() throws {
         // LIKE 経路は score=0 を返す(設計書通り)。
@@ -119,19 +27,18 @@ struct SearchEngineQueryTests {
         #expect(hits.first?.score == 0.0)
     }
 
-    // MARK: - Limit / ordering
-
-    @Test func limitIsHonored() throws {
+    @Test func fts5HitHasFiniteNonZeroScore() throws {
         let e = try fresh()
-        for i in Int64(1)...20 {
-            try e.index(id: i, text: "doc \(i) about coffee bean")
+        try e.index(id: 1, text: "がっこう")
+        let hits = try e.search(query: "がっこ", limit: 10)
+        #expect(!hits.isEmpty)
+        if let first = hits.first {
+            #expect(first.score != 0.0)
+            #expect(first.score.isFinite)
         }
-        let limit5 = try e.search(query: "coffee", limit: 5)
-        #expect(limit5.count == 5)
-
-        let limit0 = try e.search(query: "coffee", limit: 0)
-        #expect(limit0.isEmpty)
     }
+
+    // MARK: - Ordering / limit
 
     @Test func resultsAreOrderedByBM25Ascending() throws {
         let e = try fresh()
@@ -146,13 +53,26 @@ struct SearchEngineQueryTests {
         #expect(scores == scores.sorted())
     }
 
-    // MARK: - Quote / FTS5 special character safety
-
-    @Test func quoteInQueryIsEscaped() throws {
+    @Test func limitIsHonored() throws {
         let e = try fresh()
-        try e.index(id: 1, text: #"say "hello" world"#)
-        let hits = try e.search(query: #""hello""#, limit: 10)
-        #expect(hits.map(\.id) == [1])
+        for i in Int64(1)...20 {
+            try e.index(id: i, text: "doc \(i) about coffee bean")
+        }
+        let limit5 = try e.search(query: "coffee", limit: 5)
+        #expect(limit5.count == 5)
+
+        let limit0 = try e.search(query: "coffee", limit: 0)
+        #expect(limit0.isEmpty)
+    }
+
+    // MARK: - Non-throwing safety
+
+    @Test func whitespaceOnlyQueryDoesNotCrash() throws {
+        let e = try fresh()
+        try e.index(id: 1, text: "anything")
+        // " " は正規化後も1文字 → LIKE 経路だが空白マッチは無意味。例外なく返ることを担保。
+        let hits = try e.search(query: " ", limit: 10)
+        #expect(hits.count >= 0)
     }
 
     @Test func fts5SpecialCharactersDoNotCrash() throws {

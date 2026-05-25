@@ -1,0 +1,109 @@
+import Foundation
+
+/// `spec/*.json` を 1 回だけ読み込んで `Spec.normalize` / `Spec.search` で取り出せる
+/// ようにする。`#filePath` から repo root を辿るので、SwiftPM の resources 機構を
+/// 触らずに済む(`swift test` でも `xcodebuild test` でも source が file system 上に
+/// 残っている限り動く)。
+///
+/// 仕様の意図と schema は `spec/README.md` を参照。
+enum Spec {
+    static let expectedVersion = 1
+
+    static let normalize: NormalizeSpec = load("normalize")
+    static let search: SearchSpecFile = load("search")
+
+    private static let repoRoot: URL = {
+        // .../ios/Tests/UnifiedQueryTests/SpecLoader.swift → repo root を 4 階層辿る
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()    // UnifiedQueryTests
+            .deletingLastPathComponent()    // Tests
+            .deletingLastPathComponent()    // ios
+            .deletingLastPathComponent()    // repo root
+    }()
+
+    private static func load<T: Decodable>(_ name: String) -> T {
+        let url = repoRoot.appendingPathComponent("spec/\(name).json")
+        do {
+            let data = try Data(contentsOf: url)
+            let value = try JSONDecoder().decode(T.self, from: data)
+            return value
+        } catch {
+            fatalError("Failed to load spec/\(name).json at \(url.path): \(error)")
+        }
+    }
+}
+
+// MARK: - normalize.json
+
+struct NormalizeCase: Decodable, Sendable {
+    let id: String
+    let description: String
+    let input: String
+    let expected: String
+    let source: String?
+}
+
+struct NormalizeSpec: Decodable, Sendable {
+    let version: Int
+    let cases: [NormalizeCase]
+}
+
+// MARK: - search.json
+
+struct IndexOp: Decodable, Sendable {
+    /// "index" または "remove"
+    let op: String
+    let id: Int64
+    let text: String?
+}
+
+struct SearchSpec: Decodable, Sendable {
+    let query: String
+    let limit: UInt32
+}
+
+struct Assertion: Decodable, Sendable {
+    let search: SearchSpec
+    let expectedIds: [Int64]
+    enum CodingKeys: String, CodingKey {
+        case search
+        case expectedIds = "expected_ids"
+    }
+}
+
+struct Scenario: Decodable, Sendable {
+    let id: String
+    let description: String
+    let ops: [IndexOp]
+    let assertions: [Assertion]
+}
+
+struct QueryExpectation: Decodable, Sendable {
+    let query: String
+    let description: String
+    let expectedIds: [Int64]
+    enum CodingKeys: String, CodingKey {
+        case query
+        case description
+        case expectedIds = "expected_ids"
+    }
+}
+
+struct SeededMatrix: Decodable, Sendable {
+    let id: String
+    let description: String
+    let limit: UInt32
+    let seed: [IndexOp]
+    let queries: [QueryExpectation]
+}
+
+struct SearchSpecFile: Decodable, Sendable {
+    let version: Int
+    let scenarios: [Scenario]
+    let seededMatrices: [SeededMatrix]
+    enum CodingKeys: String, CodingKey {
+        case version
+        case scenarios
+        case seededMatrices = "seeded_matrices"
+    }
+}
