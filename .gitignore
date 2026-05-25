@@ -35,7 +35,7 @@ core/generated/
 # -----------------------------------------------------------------------------
 
 # XCFramework build artifact (re-creatable via xcodebuild -create-xcframework)
-ios/SearchCore.xcframework/
+ios/UniversalQuery.xcframework/
 
 # SwiftPM build / resolution artifacts (root from Package.swift)
 /.build/

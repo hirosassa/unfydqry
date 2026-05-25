@@ -1,10 +1,10 @@
-// 検索エンジンの Kotlin バインディングを格納する純 JVM モジュール。
-// iOS 側の Sources/SearchCore/ (SwiftPM ライブラリターゲット) と対をなす。
+// 検索エンジン(Rust クレート `unq`)の Kotlin バインディングを格納する純 JVM モジュール。
+// iOS 側の Sources/UniversalQuery/ (SwiftPM ライブラリターゲット UniversalQuery) と対をなす。
 //
 // `:app` はこのモジュールに依存し、Android 上では :app の jniLibs/ に置かれる
-// libsearch_core.so 経由で JNA がロードする。
+// libunq.so 経由で JNA がロードする。
 // このモジュール単体の JVM テストでは、core/target/aarch64-apple-darwin/release/
-// にビルドされた libsearch_core.dylib を `jna.library.path` で参照する。
+// にビルドされた libunq.dylib を `jna.library.path` で参照する。
 plugins {
     id("org.jetbrains.kotlin.jvm")
 }

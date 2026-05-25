@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import SearchCore
+@testable import UniversalQuery
 
 @Suite("SearchEngine query semantics")
 struct SearchEngineQueryTests {

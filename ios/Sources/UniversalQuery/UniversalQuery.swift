@@ -7,8 +7,8 @@ import Foundation
 // Depending on the consumer's build setup, the low-level FFI code
 // might be in a separate module, or it might be compiled inline into
 // this module. This is a bit of light hackery to work with both.
-#if canImport(search_coreFFI)
-import search_coreFFI
+#if canImport(unqFFI)
+import unqFFI
 #endif
 
 fileprivate extension RustBuffer {
@@ -25,13 +25,13 @@ fileprivate extension RustBuffer {
     }
 
     static func from(_ ptr: UnsafeBufferPointer<UInt8>) -> RustBuffer {
-        try! rustCall { ffi_search_core_rustbuffer_from_bytes(ForeignBytes(bufferPointer: ptr), $0) }
+        try! rustCall { ffi_unq_rustbuffer_from_bytes(ForeignBytes(bufferPointer: ptr), $0) }
     }
 
     // Frees the buffer in place.
     // The buffer must not be used after this is called.
     func deallocate() {
-        try! rustCall { ffi_search_core_rustbuffer_free(self, $0) }
+        try! rustCall { ffi_unq_rustbuffer_free(self, $0) }
     }
 }
 
@@ -536,12 +536,12 @@ open class SearchEngine:
     @_documentation(visibility: private)
 #endif
     public func uniffiClonePointer() -> UnsafeMutableRawPointer {
-        return try! rustCall { uniffi_search_core_fn_clone_searchengine(self.pointer, $0) }
+        return try! rustCall { uniffi_unq_fn_clone_searchengine(self.pointer, $0) }
     }
 public convenience init(dbPath: String)throws  {
     let pointer =
         try rustCallWithError(FfiConverterTypeSearchError.lift) {
-    uniffi_search_core_fn_constructor_searchengine_new(
+    uniffi_unq_fn_constructor_searchengine_new(
         FfiConverterString.lower(dbPath),$0
     )
 }
@@ -553,7 +553,7 @@ public convenience init(dbPath: String)throws  {
             return
         }
 
-        try! rustCall { uniffi_search_core_fn_free_searchengine(pointer, $0) }
+        try! rustCall { uniffi_unq_fn_free_searchengine(pointer, $0) }
     }
 
     
@@ -563,7 +563,7 @@ public convenience init(dbPath: String)throws  {
      * ホストは生テキストを渡すだけ。正規化はエンジン内で実行する。
      */
 open func index(id: Int64, text: String)throws  {try rustCallWithError(FfiConverterTypeSearchError.lift) {
-    uniffi_search_core_fn_method_searchengine_index(self.uniffiClonePointer(),
+    uniffi_unq_fn_method_searchengine_index(self.uniffiClonePointer(),
         FfiConverterInt64.lower(id),
         FfiConverterString.lower(text),$0
     )
@@ -571,7 +571,7 @@ open func index(id: Int64, text: String)throws  {try rustCallWithError(FfiConver
 }
     
 open func remove(id: Int64)throws  {try rustCallWithError(FfiConverterTypeSearchError.lift) {
-    uniffi_search_core_fn_method_searchengine_remove(self.uniffiClonePointer(),
+    uniffi_unq_fn_method_searchengine_remove(self.uniffiClonePointer(),
         FfiConverterInt64.lower(id),$0
     )
 }
@@ -579,7 +579,7 @@ open func remove(id: Int64)throws  {try rustCallWithError(FfiConverterTypeSearch
     
 open func search(query: String, limit: UInt32)throws  -> [Hit] {
     return try  FfiConverterSequenceTypeHit.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
-    uniffi_search_core_fn_method_searchengine_search(self.uniffiClonePointer(),
+    uniffi_unq_fn_method_searchengine_search(self.uniffiClonePointer(),
         FfiConverterString.lower(query),
         FfiConverterUInt32.lower(limit),$0
     )
@@ -790,7 +790,7 @@ fileprivate struct FfiConverterSequenceTypeHit: FfiConverterRustBuffer {
  */
 public func normalizeLoose(input: String) -> String {
     return try!  FfiConverterString.lift(try! rustCall() {
-    uniffi_search_core_fn_func_normalizeloose(
+    uniffi_unq_fn_func_normalizeloose(
         FfiConverterString.lower(input),$0
     )
 })
@@ -807,23 +807,23 @@ private var initializationResult: InitializationResult = {
     // Get the bindings contract version from our ComponentInterface
     let bindings_contract_version = 26
     // Get the scaffolding contract version by calling the into the dylib
-    let scaffolding_contract_version = ffi_search_core_uniffi_contract_version()
+    let scaffolding_contract_version = ffi_unq_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_search_core_checksum_func_normalizeloose() != 9009) {
+    if (uniffi_unq_checksum_func_normalizeloose() != 13831) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_search_core_checksum_method_searchengine_index() != 24025) {
+    if (uniffi_unq_checksum_method_searchengine_index() != 57966) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_search_core_checksum_method_searchengine_remove() != 30526) {
+    if (uniffi_unq_checksum_method_searchengine_remove() != 48939) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_search_core_checksum_method_searchengine_search() != 18348) {
+    if (uniffi_unq_checksum_method_searchengine_search() != 50770) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_search_core_checksum_constructor_searchengine_new() != 14963) {
+    if (uniffi_unq_checksum_constructor_searchengine_new() != 7259) {
         return InitializationResult.apiChecksumMismatch
     }
 

@@ -1,12 +1,12 @@
 import Foundation
 import Testing
-@testable import SearchCore
+@testable import UniversalQuery
 
 /// 各テストで独立した一時 DB ファイルを作って渡すヘルパ。
 /// テスト終了時に削除する責任は呼び出し側。
 private func makeTempDBPath() -> String {
     let dir = FileManager.default.temporaryDirectory
-        .appendingPathComponent("SearchCoreTests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("UniversalQueryTests-\(UUID().uuidString)", isDirectory: true)
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     return dir.appendingPathComponent("index.sqlite").path
 }

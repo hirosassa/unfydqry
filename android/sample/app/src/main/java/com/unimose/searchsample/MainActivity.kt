@@ -24,8 +24,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import uniffi.search_core.SearchEngine
-import uniffi.search_core.normalizeLoose
+import uniffi.unq.SearchEngine
+import uniffi.unq.normalizeLoose
 
 /// アプリ側「本体DB」を模した最小レコード(SwiftData/Room エンティティに相当)。
 data class Record(val id: Long, val text: String)

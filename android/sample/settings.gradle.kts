@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "SearchSample"
 include(":app")
-include(":searchcore")
+include(":universalquery")

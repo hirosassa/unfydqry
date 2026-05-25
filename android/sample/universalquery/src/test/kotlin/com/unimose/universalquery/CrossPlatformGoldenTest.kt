@@ -1,4 +1,4 @@
-package com.unimose.searchcore
+package com.unimose.universalquery
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -8,8 +8,8 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
 import java.util.stream.Stream
-import uniffi.search_core.SearchEngine
-import uniffi.search_core.normalizeLoose
+import uniffi.unq.SearchEngine
+import uniffi.unq.normalizeLoose
 
 /**
  * 設計書 §E.4「ゴールデンテスト」を Kotlin 側でも担保する。

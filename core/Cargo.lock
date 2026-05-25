@@ -459,16 +459,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "search-core"
-version = "0.1.0"
-dependencies = [
- "rusqlite",
- "thiserror",
- "unicode-normalization",
- "uniffi",
-]
-
-[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -758,6 +748,16 @@ dependencies = [
  "uniffi_meta",
  "uniffi_testing",
  "weedle2",
+]
+
+[[package]]
+name = "unq"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "thiserror",
+ "unicode-normalization",
+ "uniffi",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-package com.unimose.searchcore
+package com.unimose.universalquery
 
 import java.io.File
 import java.nio.file.Files
@@ -9,8 +9,8 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
-import uniffi.search_core.SearchEngine
-import uniffi.search_core.SearchException
+import uniffi.unq.SearchEngine
+import uniffi.unq.SearchException
 
 private fun makeTempDbPath(): String {
     val dir = Files.createTempDirectory("SearchCoreTests-${UUID.randomUUID()}").toFile()

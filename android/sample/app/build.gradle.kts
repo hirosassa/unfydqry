@@ -31,9 +31,9 @@ android {
 }
 
 dependencies {
-    // バインディング(uniffi.search_core.*)は :searchcore モジュール経由で取り込む。
-    // iOS の SwiftPM ライブラリターゲットを参照するのと対称。
-    implementation(project(":searchcore"))
+    // バインディング(uniffi.unq.*)は :universalquery モジュール経由で取り込む。
+    // iOS の SwiftPM ライブラリターゲット(UniversalQuery)を参照するのと対称。
+    implementation(project(":universalquery"))
 
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation(platform("androidx.compose:compose-bom:2024.10.01"))
@@ -41,6 +41,6 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     // JNA のネイティブ・ディスパッチ部(libjnidispatch.so)は AAR からしか入らない。
-    // :searchcore は jar 配布なので、Android 上では app 側でこの AAR を足す必要がある。
+    // :universalquery は jar 配布なので、Android 上では app 側でこの AAR を足す必要がある。
     implementation("net.java.dev.jna:jna:5.14.0@aar")
 }
