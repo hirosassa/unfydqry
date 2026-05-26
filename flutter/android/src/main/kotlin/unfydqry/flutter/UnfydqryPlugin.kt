@@ -1,5 +1,21 @@
 package unfydqry.flutter
 
+// ─── Maintenance guide (for iOS developers) ──────────────────────────────────
+// This file is the Android counterpart of ios/Classes/UnfydqryPlugin.swift.
+// You should rarely need to change it. The only reason to edit it is when the
+// native SearchEngine API changes:
+//
+//   If `uniffi.unfydqry.SearchEngine` gains, removes, or renames a method,
+//   this file will FAIL TO COMPILE and the error will point to the exact line.
+//   Mirror the same change you made to UnfydqryPlugin.swift — the method
+//   names and parameters are the same; only the syntax differs.
+//
+// The Kotlin syntax cheat-sheet for this file:
+//   fun name(param: Type): ReturnType  →  func name(param: Type) -> ReturnType
+//   call.argument<String>("key")!!     →  args["key"] as! String
+//   result.success(value)              →  result(value)
+// ─────────────────────────────────────────────────────────────────────────────
+
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
