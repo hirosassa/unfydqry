@@ -1,8 +1,8 @@
 import UnifiedQuery
 import SwiftUI
 
-/// アプリ側で持つ「本体DB」を模した最小レコード。
-/// 本物のアプリでは SwiftData/Core Data のエンティティに相当する位置づけ。
+/// Minimal record that stands in for the app's "source-of-truth DB".
+/// In a real app this would be a SwiftData / Core Data entity.
 struct Record: Identifiable, Hashable {
     let id: Int64
     let text: String
@@ -15,8 +15,9 @@ final class SearchModel: ObservableObject {
     @Published var results: [Record] = []
 
     private let engine: SearchEngine
-    /// 検索エンジンは ID と score しか返さないため、本体側で id→Record の引き直しを行う。
-    /// 設計書 §1.3「IDのみ返却 / 本体DBから再フェッチ」をミニチュア実装したもの。
+    /// The engine returns only IDs and scores, so the host side maps id → Record.
+    /// A miniature implementation of design doc §1.3 ("return IDs only / re-fetch from
+    /// the source-of-truth DB").
     private var store: [Int64: Record] = [:]
 
     init() {
@@ -58,7 +59,7 @@ final class SearchModel: ObservableObject {
     func search() {
         do {
             let hits = try engine.search(query: query, limit: 50)
-            // ID で本体ストアから引き直す(失われたレコードはスキップ)。
+            // Re-fetch records from the host store by ID (skip any that were dropped).
             results = hits.compactMap { store[$0.id] }
             status = "hits: \(results.count)  normalized=\u{0022}\(normalizeLoose(input: query))\u{0022}"
         } catch {

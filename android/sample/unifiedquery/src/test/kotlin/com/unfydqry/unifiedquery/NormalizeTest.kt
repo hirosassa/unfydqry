@@ -8,13 +8,13 @@ import org.junit.jupiter.api.Test
 import uniffi.unfydqry.normalizeLoose
 
 /**
- * `normalizeLoose` の **言語固有 / プロパティ系** テスト。
+ * **Language-specific / property-style** tests for `normalizeLoose`.
  *
- * (input → expected) の素朴な対は `spec/normalize.json` と `SpecDrivenTest` 側に
- * 寄せてある。ここに残るのは:
- *   - 不等式アサーション(濁点・半濁点が「別キーである」ことの確認)
+ * Plain (input → expected) pairs live in `spec/normalize.json` and
+ * `SpecDrivenTest`. What remains here:
+ *   - inequality assertions (dakuten/handakuten produce distinct keys)
  *   - idempotency
- *   - 長文の性能スモーク
+ *   - long-input smoke
  */
 @DisplayName("normalizeLoose (native-only)")
 class NormalizeTest {

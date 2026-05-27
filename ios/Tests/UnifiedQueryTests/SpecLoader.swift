@@ -1,11 +1,11 @@
 import Foundation
 
-/// `spec/*.json` を 1 回だけ読み込んで `Spec.normalize` / `Spec.search` で取り出せる
-/// ようにする。`#filePath` から repo root を辿るので、SwiftPM の resources 機構を
-/// 触らずに済む(`swift test` でも `xcodebuild test` でも source が file system 上に
-/// 残っている限り動く)。
+/// Loads `spec/*.json` once and exposes them via `Spec.normalize` / `Spec.search`.
+/// Walks up from `#filePath` to locate the repo root, so SwiftPM's resources
+/// mechanism is not needed (works under both `swift test` and `xcodebuild test`
+/// as long as the source files remain on the filesystem).
 ///
-/// 仕様の意図と schema は `spec/README.md` を参照。
+/// See `spec/README.md` for the spec's intent and schema.
 enum Spec {
     static let expectedVersion = 1
 
@@ -13,7 +13,7 @@ enum Spec {
     static let search: SearchSpecFile = load("search")
 
     private static let repoRoot: URL = {
-        // .../ios/Tests/UnifiedQueryTests/SpecLoader.swift → repo root を 4 階層辿る
+        // .../ios/Tests/UnifiedQueryTests/SpecLoader.swift → go up 4 levels to reach the repo root.
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()    // UnifiedQueryTests
             .deletingLastPathComponent()    // Tests
@@ -51,7 +51,7 @@ struct NormalizeSpec: Decodable, Sendable {
 // MARK: - search.json
 
 struct IndexOp: Decodable, Sendable {
-    /// "index" または "remove"
+    /// Either "index" or "remove".
     let op: String
     let id: Int64
     let text: String?

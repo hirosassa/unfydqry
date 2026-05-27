@@ -2,9 +2,10 @@ import Foundation
 import Testing
 @testable import UnifiedQuery
 
-/// 設計書 §E.4「ゴールデンテスト」を `spec/*.json` の形で具現化したテスト。
-/// Kotlin / Rust 側と同じ JSON を読むので、Rust コアの正規化や検索ロジックが変わると
-/// 3 つのランナー(Swift / Kotlin / Rust)が同時に同じ id で失敗する。
+/// Materializes the "golden tests" from design doc §E.4 in the form of `spec/*.json`.
+/// Reads the same JSON files as the Kotlin and Rust suites, so any drift in the Rust
+/// core's normalization or search logic causes all three runners (Swift / Kotlin / Rust)
+/// to fail at the same `id` simultaneously.
 @Suite("Spec-driven cross-platform")
 struct SpecDrivenTests {
     // MARK: - normalize.json
@@ -41,8 +42,9 @@ struct SpecDrivenTests {
 
     // MARK: - search.json: seeded_matrices
 
-    /// 共有シードに対する全 matrix × 全 query を 1 つの `@Test` に展開する。
-    /// matrix が 1 つしかない現状でも、将来複数 matrix を足せばそのまま倍々で増える。
+    /// Expand every (matrix × query) over the shared seed into a single `@Test`.
+    /// Today there is only one matrix; adding more later automatically multiplies
+    /// the case count without further plumbing.
     static let matrixCases: [(matrix: SeededMatrix, query: QueryExpectation)] = {
         Spec.search.seededMatrices.flatMap { m in m.queries.map { (m, $0) } }
     }()

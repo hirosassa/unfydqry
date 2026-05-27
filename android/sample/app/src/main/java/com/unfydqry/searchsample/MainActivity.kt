@@ -27,7 +27,8 @@ import androidx.compose.ui.unit.dp
 import uniffi.unfydqry.SearchEngine
 import uniffi.unfydqry.normalizeLoose
 
-/// アプリ側「本体DB」を模した最小レコード(SwiftData/Room エンティティに相当)。
+/// Minimal record standing in for the app's "source-of-truth DB" (equivalent to a
+/// SwiftData / Room entity).
 data class Record(val id: Long, val text: String)
 
 class MainActivity : ComponentActivity() {
@@ -45,8 +46,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // iOS サンプルと同じシード(両OSで同じヒットIDが返ることを目で確認するため)。
-    // 返り値は id → Record の引き直し用ストア。
+    // Same seed as the iOS sample, so the same hit IDs can be eyeballed across both OSes.
+    // Returns the id → Record store used to re-fetch records.
     private fun seed(engine: SearchEngine): Map<Long, Record> {
         val docs = listOf(
             Record(1L, "東京タワー"),
@@ -79,7 +80,8 @@ fun SearchScreen(engine: SearchEngine, store: Map<Long, Record>) {
         Spacer(Modifier.height(8.dp))
         Button(onClick = {
             val hits = engine.search(query, 50u)
-            // 設計書 §1.3「IDのみ返却 / 本体DBから再フェッチ」を最小実装。
+            // Minimal implementation of design doc §1.3 ("return IDs only / re-fetch
+            // from the source-of-truth DB").
             val records = hits.mapNotNull { store[it.id] }
             results.clear()
             results.addAll(records)

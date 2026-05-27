@@ -26,19 +26,26 @@ unfydqry/
 ├── Package.swift                ← SwiftPM のエントリ。リポジトリのルートに配置
 ├── core/                        Rust 実装(crate 名: unfydqry)
 │   ├── Cargo.toml
-│   └── src/{lib,normalize,engine,bin/uniffi-bindgen}.rs
+│   ├── src/{lib,normalize,engine,bin/uniffi-bindgen}.rs
+│   └── tests/conformance.rs     spec 駆動の統合テスト(後述「テスト」節)
+├── spec/                        プラットフォーム間で共有する仕様(JSON)
+│   ├── README.md                スキーマと運用ルール
+│   ├── normalize.json           normalizeLoose の (input → expected) ケース
+│   └── search.json              SearchEngine の scenarios と seeded matrices
 ├── ios/                         iOS 関係をまとめて配置
 │   ├── UnifiedQuery.xcframework  生成成果物(.gitignore)
 │   ├── Sources/UnifiedQuery/     SwiftPM ライブラリ。バインディングはコミット済み
-│   ├── Tests/UnifiedQueryTests/  Swift Testing(61 ケース / 5 suite)
+│   ├── Tests/UnifiedQueryTests/  Swift Testing — 4 suite(後述)
 │   └── sample/                   SwiftUI サンプル(SwiftPM 経由で取り込み)
 ├── android/
 │   ├── jniLibs/                 cargo-ndk で生成される libunfydqry.so(.gitignore)
 │   └── sample/                  Gradle ルート
 │       ├── settings.gradle.kts  include(":app", ":unifiedquery")
 │       ├── app/                 Compose サンプルアプリ
-│       └── unifiedquery/        JVM Kotlin ライブラリ + JUnit 5(95 ケース / 5 suite)
-└── docs/cross-platform-search-engine-design.md
+│       └── unifiedquery/        JVM Kotlin ライブラリ + JUnit 5 — 4 クラス
+└── docs/
+    ├── README.ja.md
+    └── cross-platform-search-engine-design.md
 ```
 
 | | iOS | Android |
@@ -59,7 +66,7 @@ let dbURL = FileManager.default
     .appendingPathComponent("search_index.sqlite")
 let engine = try SearchEngine(dbPath: dbURL.path)
 
-try engine.index(id: 1, text: "Ｐｙｔｈｏｎ 入門")
+try engine.index(id: 1, text: "Ｐｙｔｈｏｮ 入門")
 let hits = try engine.search(query: "python", limit: 50)
 // → [Hit(id: 1, score: -1.521)]
 ```
@@ -70,7 +77,7 @@ import uniffi.unfydqry.SearchEngine
 
 val engine = SearchEngine(filesDir.resolve("search_index.sqlite").absolutePath)
 
-engine.index(1L, "Ｐｙｔｈｮｮｮｮｮ 入門")
+engine.index(1L, "Ｐｙｔｈｏｮ 入門")
 val hits = engine.search("python", 50u)
 // → [Hit(id=1, score=-1.521)]
 ```
@@ -86,28 +93,19 @@ val hits = engine.search("python", 50u)
 ### Rust 単体
 ```sh
 cd core
-cargo test --lib                 # 15 ケース
+cargo test --all-targets         # unit + conformance
 cargo build --release
 ```
 
 ### iOS(SwiftPM + Xcode サンプル)
 ```sh
-# Rust から XCFramework を生成
-cd core && cargo build --release \
-  --target aarch64-apple-darwin \
-  --target aarch64-apple-ios \
-  --target aarch64-apple-ios-sim \
-  --target x86_64-apple-ios
-# (省略可)Swift バインディングを再生成
-cargo run --bin uniffi-bindgen -- generate \
-  --library target/aarch64-apple-ios/release/libunfydqry.a \
-  --language swift --out-dir generated/swift
+# 4 つの Apple ターゲットをビルドし、Swift バインディングを再生成し、
+# fat XCFramework を組み立て、SwiftPM 用に zip 化、checksum を表示する。
+# ios/UnifiedQuery.xcframework{,.zip,.zip.sha256} が生成される。
+bash scripts/build-xcframework.sh
 
-# 上の手順を含めた XCFramework 作成スクリプトは scripts/build-xcframework.sh 想定
-cd ..
-
-# テスト
-swift test                       # 61 ケース
+# テスト(Package.swift がローカルの xcframework を参照する)
+swift test
 
 # サンプルアプリ
 cd ios/sample
@@ -126,7 +124,7 @@ ANDROID_NDK_HOME=/path/to/ndk cargo ndk \
 # JVM 単体テスト(macOS arm64 の dylib を JNA で直接読む)
 cargo build --release --target aarch64-apple-darwin
 cd ../android/sample
-gradle :unifiedquery:test        # 95 ケース
+gradle :unifiedquery:test
 
 # サンプルアプリ
 gradle :app:assembleDebug
@@ -135,16 +133,152 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## テスト
 
-| ランタイム | 範囲 | コマンド | 件数 |
-|---|---|---|---|
-| Rust | `normalize` / `engine` の内部ロジック | `cd core && cargo test --lib` | 15 |
-| Swift Testing | macOS / iOS シミュレータでの ライブラリ全公開 API | `swift test` | 61 |
-| JUnit 5 (JVM) | 同一ケースを Kotlin 側で再検証 | `cd android/sample && gradle :unifiedquery:test` | 95 |
+3 つのランナ — `cargo test`(Rust)/ `swift test`(Swift Testing)/
+`gradle :unifiedquery:test`(JVM 上の JUnit 5)— が **同じ Rust コア** に対して
+**同じ振る舞いの契約**を検証する。それぞれ独立した CI ワークフローで動き、
+3 つすべてが緑である必要がある。
 
-`ios/Tests/UnifiedQueryTests/CrossPlatformGoldenTests.swift` と
-`android/sample/unifiedquery/src/test/kotlin/.../CrossPlatformGoldenTest.kt` は
-**同一の正規化トレース表とクエリ行列**を持ち、Rust コアの正規化が変わると両方が
-同時に壊れる構造になっている(設計書 §E.4 のゴールデンテスト方針)。
+### テストは 4 層に分かれている
+
+各プラットフォームのテストは目的別に **4 層** に分かれている。新しい
+プラットフォームを追加する場合も、同じ 4 層構成をそのまま再現すること
+(後述「新しいプラットフォームを追加する」)。
+
+| 層 | 配置 | 守備範囲 | 守備範囲外 |
+|---|---|---|---|
+| 1. Rust ユニット | `core/src/{normalize,engine}.rs` の `#[cfg(test)] mod tests` | Rust コアの内部ロジック(private 項目にアクセスできる)。 | FFI 経由で初めて出る挙動。 |
+| 2. spec 駆動(共通) | `spec/*.json` と各プラットフォームのローダ | すべてのランナで共有する `(input → expected)` / `(ops → ids)` 形式のケース。Rust コアがズレると **3 つの CI が同じ `id` で同時に落ちる**。 | 不等式や恒等性、性能スモーク、ファイル I/O ライフサイクル、score の sanity — どれも単純な「値の等価比較」に落とせない。 |
+| 3. native ライフサイクル | 各プラットフォームの `*LifecycleTests` | その言語の I/O / 例外型に依存する開閉・再オープン・永続化・不正パス挙動。 | 検索の振る舞い。 |
+| 4. native query(データ駆動でないもの) | 各プラットフォームの `*QueryTests` / `*Tests` | bm25 の順序、`limit` のカウント、score の sanity(LIKE 経路は `0.0`、FTS5 経路は有限の非ゼロ)、FTS5 予約文字の非例外、並行検索のスモーク。 | `(input → expected)` で書けるもの — それは `spec/` 側に置く。 |
+
+原則は **「単純な値の等価で書けるなら `spec/` に書く。それ以外だけ native に
+残す」**。スコープ判断のソースは [`spec/README.md`](../spec/README.md) で
+別途記述している。
+
+### 実行コマンド
+
+| ランナ | コマンド | 何を読み込むか |
+|---|---|---|
+| Rust unit | `cd core && cargo test --lib` | `core/src/{normalize,engine}.rs` の `#[cfg(test)]` |
+| Rust conformance | `cd core && cargo test --test conformance` | `core/tests/conformance.rs` → `../spec/*.json` |
+| Rust 全部 | `cd core && cargo test --all-targets` | 上の両方(CI と同じ) |
+| Swift Testing | `swift test` | `ios/Tests/UnifiedQueryTests/*.swift`(`SpecLoader` が `#filePath` から `spec/` を辿る) |
+| JUnit 5 (JVM) | `cd android/sample && gradle :unifiedquery:test` | `unifiedquery/src/test/kotlin/.../*.kt`(`build.gradle.kts` が `unfydqry.spec.dir` を渡す) |
+
+### `spec/` ディレクトリ
+
+`spec/normalize.json` と `spec/search.json` は **プラットフォーム間で共有
+する振る舞いの単一の真実** である。スキーマ・運用ルール
+(バージョニング、`id`、`description`、スコープ判断)と意図は
+[`spec/README.md`](../spec/README.md) にまとまっている。要点だけ:
+
+- 各ファイルにバージョン番号が付いている(`"version": 1`)。ローダはこの
+  バージョンが期待値と一致しないときは実行を拒否する — 将来スキーマを
+  変えたときに「読み込めなくてテストが空通過する」事故を防ぐ。
+- 各ケースは安定した snake-case の `id` と人間向け説明 `description` を
+  必ず持つ。ローダはこの両方を失敗メッセージに含める必要がある — CI ログ
+  だけ見て原因が分かるようにするための要件。
+- `normalize.json` は `(input, expected)` の素朴な並び。
+- `search.json` には 2 種類のセクションがある: `scenarios`(`ops` を
+  実行してから `assertions` を投げる)と `seeded_matrices`(共通の seed
+  を 1 度だけ用意して、多数のクエリで再利用する。クエリ毎に seed する
+  より速い)。
+- ヒット ID の比較は **集合比較**(順序を見ない)。順序の検査は native の
+  query 層に残す(bm25 に依存するため)。
+
+### 各プラットフォームのテストファイル
+
+iOS(`ios/Tests/UnifiedQueryTests/`):
+
+| ファイル | 層 | 備考 |
+|---|---|---|
+| `SpecLoader.swift` | インフラ | `spec/*.json` を Swift の struct にデコード。`#filePath` から `spec/` を辿るため SwiftPM の resources 機構は不要。 |
+| `SpecDrivenTests.swift` | 2 — spec 駆動 | `@Test(arguments:)` で spec ケースを 1 件 1 パラメタライズドテストに展開。 |
+| `NormalizeTests.swift` | 4 — native (normalize) | 不等式(`が ≠ か`)、idempotency、長文スモーク。 |
+| `SearchEngineLifecycleTests.swift` | 3 — ライフサイクル | `:memory:`、ファイル生成、再オープン後の永続性、不正パス、複数 DB の独立性。 |
+| `SearchEngineQueryTests.swift` | 4 — native (query) | bm25 順序、`limit`、score sanity、FTS5 予約文字、`withTaskGroup` での並行スモーク。 |
+
+Android(`android/sample/unifiedquery/src/test/kotlin/com/unfydqry/unifiedquery/`):
+
+| ファイル | 層 | 備考 |
+|---|---|---|
+| `Spec.kt` | インフラ | Jackson で `spec/*.json` をデコード。`unfydqry.spec.dir` は `build.gradle.kts` から渡る。 |
+| `SpecDrivenTest.kt` | 2 — spec 駆動 | `@ParameterizedTest` + `@MethodSource` で Swift と同じ展開をする。 |
+| `NormalizeTest.kt` | 4 — native (normalize) | Swift と同じ不等式 / idempotency / 長文ケース。 |
+| `SearchEngineLifecycleTest.kt` | 3 — ライフサイクル | `java.nio.file` と `SearchException` 版。形は Swift とほぼ対応。 |
+| `SearchEngineQueryTest.kt` | 4 — native (query) | bm25 順序、`limit`、score sanity、FTS5 予約文字、`ExecutorService` 並行。 |
+
+Rust(`core/`):
+
+| ファイル | 層 | 備考 |
+|---|---|---|
+| `src/normalize.rs` の `mod tests` | 1 — unit | 設計書 §2.2 のトレース表。濁点 / 半濁点の区別。 |
+| `src/engine.rs` の `mod tests` | 1 — unit | index / remove / 再 index / LIKE フォールバック / クォートエスケープ / 空クエリ。 |
+| `tests/conformance.rs` | 2 — spec 駆動 | Swift / Kotlin と同じ `spec/*.json` を、Rust API に直接当てる。FFI バインディングに依存せずコアのドリフトを検出する。 |
+
+native の query / lifecycle 層は **Rust 側には敢えて置いていない** — Rust
+コアには FFI 固有のライフサイクル(Swift の `FileManager`、JNA のロード
+など)が無いし、bm25 / 順序の性質は同じコード経路を Swift と Kotlin が
+両側から踏むので十分カバーされる。
+
+### 新しいプラットフォームを追加する
+
+別言語(Python via maturin、Node via napi-rs、Flutter、Wasm/JS、.NET など)
+を載せる場合、テストスイートはこの 4 層をそのまま再現する。具体的には:
+
+1. **UniFFI バインディングを生成してコミット**する。Swift / Kotlin と同じ
+   方針(言語のライブラリモジュールにバインディングを同梱、FFI ネイティブ
+   ライブラリはその言語の流儀でロード)で揃える。
+2. **spec ローダを書く**。ローダは:
+   - リポジトリ内の `spec/` ディレクトリを見つける(Kotlin のように
+     ビルドシステムのプロパティ経由、Swift のようにテストファイルから
+     ディレクトリを遡る、Rust 統合テストのように相対パスを使う、
+     どれでも良い)。
+   - [`spec/README.md`](../spec/README.md) のスキーマに合わせて両 JSON
+     ファイルを型付き構造体にデコードする(`version`、`cases`、
+     `scenarios`、`seeded_matrices`、`ops` は `index` / `remove` の
+     tagged union)。
+   - `version == EXPECTED_VERSION` をアサートし、一致しなければ実行を
+     拒否する。これが将来スキーマが変わったときに「黙って通る」事故を
+     防ぐ要。
+3. **`Spec*` テストを 4 件移植する**(`normalize cases`、`scenarios`、
+   `seeded_matrices`、加えて 2 つの `version` チェック)。各ケースの失敗
+   メッセージには **必ず `id` と `description` を含める** こと — 複数 CI
+   にまたがるデバッグの肝。
+4. **native 2 層(lifecycle と query)を移植する**。Swift / Kotlin の
+   ペアは、新たな第 3 言語に翻訳しやすくするため、互いに鏡像になるよう
+   書いてある。**スコープの境界**は表のとおり厳守: `(input → expected)`
+   で書ける検査は `spec/` に出す。
+5. **GitHub Actions ワークフローを追加する**。
+   `.github/workflows/{swift,kotlin,rust}-tests.yml` をテンプレートに
+   する。トリガパスには `core/**` と `spec/**` を必ず含める — これに
+   よって、コアや spec の変更が全プラットフォームの CI に同時に伝播する。
+6. **共通の振る舞いを増やすときは native ではなく `spec/` を拡張する**。
+   1 度 JSON に書き足せば、次の CI ランから全プラットフォームで自動的に
+   検査されるようになる。
+
+Rust コアを壊した変更は、すべてのプラットフォームで **同じ `id` のテスト
+が同時に落ちる** はず。1 言語だけ落ちるなら、それはそのプラットフォーム
+の spec ローダ側のバグ(コアではない)。
+
+## iOS xcframework の新規リリース
+
+xcframework は Git にコミットせず、GitHub Releases で配布している。新規
+リリース手順:
+
+1. 目的の変更を `main` にすべて取り込む。
+2. Actions → **Release XCFramework** → *Run workflow* を実行。タグ名
+   (例: `v0.1.0`)を渡す。
+3. ワークフローが `scripts/build-xcframework.sh` を実行し、`main` から
+   分岐した detached HEAD 上で `Package.swift` の
+   `// --- BINARY-TARGET START/END ---` ブロックを URL + checksum 形式
+   に書き換え、その commit にタグを打ち、(ブランチではなく)タグだけを
+   push し、`UnifiedQuery.xcframework.zip` を添付した Release を公開
+   する。
+
+タグの commit にある `Package.swift` と添付 zip は同じ run で作られる
+ので、SwiftPM クライアントが checksum 不一致のタグを見ることは無い。
+`main` 自体はリリースワークフローでは変更されない。
 
 ## 名前空間まとめ
 

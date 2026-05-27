@@ -41,7 +41,7 @@ impl SearchEngine {
              CREATE TABLE IF NOT EXISTS meta(
                  key TEXT PRIMARY KEY, value TEXT NOT NULL);",
         )?;
-        // 将来 normalize_loose を変えたときの再構築判定用。
+        // Used to detect when the index needs to be rebuilt after a future change to normalize_loose.
         conn.execute(
             "INSERT OR IGNORE INTO meta(key, value) VALUES ('index_version', '1')",
             [],
@@ -51,7 +51,7 @@ impl SearchEngine {
         }))
     }
 
-    /// ホストは生テキストを渡すだけ。正規化はエンジン内で実行する。
+    /// The host just passes raw text; normalization runs inside the engine.
     pub fn index(&self, id: i64, text: String) -> Result<(), SearchError> {
         let norm = normalize_loose(&text);
         let conn = self.conn.lock().unwrap();
@@ -82,7 +82,7 @@ impl SearchEngine {
             return Ok(Vec::new());
         }
 
-        // trigram は3文字未満をマッチできない → LIKE フォールバック。
+        // Trigram cannot match queries shorter than 3 chars → fall back to LIKE.
         if q.chars().count() < 3 {
             let mut stmt =
                 conn.prepare("SELECT id FROM entries WHERE norm LIKE '%'||?1||'%' LIMIT ?2")?;
@@ -95,7 +95,7 @@ impl SearchEngine {
             return Ok(rows.filter_map(Result::ok).collect());
         }
 
-        // FTS5 のクエリ構文として解釈されるのを避けるためフレーズで包む。
+        // Wrap as a phrase to prevent the input from being interpreted as FTS5 query syntax.
         let phrase = format!("\"{}\"", q.replace('"', "\"\""));
         let mut stmt = conn.prepare(
             "SELECT rowid, bm25(docs) FROM docs
@@ -116,7 +116,7 @@ mod tests {
     use super::*;
 
     fn fresh() -> Arc<SearchEngine> {
-        // メモリDB(各テストで独立)
+        // In-memory DB (independent per test).
         SearchEngine::new(":memory:".to_string()).expect("open")
     }
 
@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn short_query_uses_like_fallback() {
-        // 2文字クエリは trigram では返らないので LIKE 経路を踏むはず
+        // A 2-char query cannot be served by trigram, so it must take the LIKE path.
         let e = fresh();
         e.index(1, "がっこう".into()).unwrap();
         e.index(2, "かばん".into()).unwrap();

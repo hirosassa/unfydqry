@@ -12,10 +12,11 @@ import uniffi.unfydqry.SearchEngine
 import uniffi.unfydqry.normalizeLoose
 
 /**
- * 設計書 §E.4「ゴールデンテスト」を spec/normalize.json と spec/search.json の形で
- * 具現化したテスト。Swift / Rust 側と同じ JSON を読むので、Rust コアの正規化や
- * 検索ロジックが変わると 3 つのランナ(Swift / Kotlin / Rust)が同時に同じ id で
- * 失敗する。
+ * Materializes the "golden tests" from design doc §E.4 in the form of
+ * spec/normalize.json and spec/search.json. Reads the same JSON files as the
+ * Swift and Rust suites, so any drift in the Rust core's normalization or
+ * search logic causes all three runners (Swift / Kotlin / Rust) to fail at the
+ * same `id` simultaneously.
  */
 @DisplayName("Spec-driven cross-platform")
 class SpecDrivenTest {

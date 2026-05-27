@@ -11,15 +11,15 @@ import org.junit.jupiter.api.Test
 import uniffi.unfydqry.SearchEngine
 
 /**
- * `SearchEngine` の **言語固有・非データ駋動** な性質をチェックする。
+ * Checks the **language-specific, non-data-driven** properties of `SearchEngine`.
  *
- * 入力→ヒット ID の素朴な対は `spec/search.json` と `SpecDrivenTest` 側に寄せて
- * あるので、ここに残るのは:
- *   - score の sanity(LIKE 経路は 0、FTS5 経路は有限の非ゼロ)
- *   - 順序(bm25 昇順)
- *   - limit のカウント(どの ID が来るかは非決定)
- *   - 例外を出さないことの確認(FTS5 予約文字、空白だけのクエリ)
- *   - 並行検索(Mutex<Connection> 経由の直列化が落ちないこと)
+ * Plain (input → hit ID) pairs live in `spec/search.json` and `SpecDrivenTest`.
+ * What remains here:
+ *   - score sanity (LIKE path returns 0; FTS5 path returns a finite non-zero score)
+ *   - ordering (bm25 ascending)
+ *   - limit count (which IDs come back is non-deterministic; the count isn't)
+ *   - non-throwing safety (FTS5 reserved characters, whitespace-only queries)
+ *   - concurrent search (serialization via Mutex<Connection> does not crash)
  */
 @DisplayName("SearchEngine query (native-only)")
 class SearchEngineQueryTest {
@@ -75,7 +75,7 @@ class SearchEngineQueryTest {
         e.index(1, "alpha beta gamma")
         for (q in listOf("alpha AND beta", "alpha OR beta", "alpha NEAR beta",
                           "alpha*", "(alpha)", "alpha:beta")) {
-            e.search(q, 10u) // 例外なく完走することだけを確認
+            e.search(q, 10u) // Only assert the call completes without throwing.
         }
     }
 

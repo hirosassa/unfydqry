@@ -2,19 +2,19 @@ import Foundation
 import Testing
 @testable import UnifiedQuery
 
-/// `normalizeLoose` の **言語固有 / プロパティ系** テスト。
+/// **Language-specific / property-style** tests for `normalizeLoose`.
 ///
-/// (input → expected) の素朴な対は `spec/normalize.json` と `SpecDrivenTests` 側に
-/// 寄せてある。ここに残るのは:
-///   - 不等式アサーション(濁点・半濁点が「別キーである」ことの確認)
-///   - idempotency(`normalize(normalize(x)) == normalize(x)`)
-///   - 長文の性能スモーク(落ちないこと、空でないこと)
+/// Plain (input → expected) pairs live in `spec/normalize.json` and
+/// `SpecDrivenTests`. What remains here:
+///   - inequality assertions (dakuten/handakuten produce distinct keys)
+///   - idempotency (`normalize(normalize(x)) == normalize(x)`)
+///   - long-input smoke (doesn't crash, doesn't return empty)
 @Suite("normalizeLoose (native-only)")
 struct NormalizeTests {
     // MARK: - Dakuten / handakuten distinguished
 
     @Test func dakutenAndUnvoicedAreDifferent() {
-        // 「が」と「か」は別キーになる。
+        // 「が」 and 「か」 must hash to different keys.
         #expect(normalizeLoose(input: "が") != normalizeLoose(input: "か"))
     }
 
@@ -23,7 +23,7 @@ struct NormalizeTests {
     }
 
     @Test func dakutenAndHandakutenAreDifferent() {
-        // 「ば」と「ぱ」も区別。
+        // 「ば」 and 「ぱ」 are also distinct.
         #expect(normalizeLoose(input: "ば") != normalizeLoose(input: "ぱ"))
     }
 

@@ -6,13 +6,14 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import java.io.File
 
 /**
- * spec ディレクトリ配下の normalize.json と search.json を 1 回だけ読み込んで
- * [Spec.normalize] / [Spec.search] で取り出せるようにする。spec ディレクトリの
- * 場所は build.gradle.kts の `tasks.test { systemProperty("unfydqry.spec.dir", ...) }`
- * で渡される。
+ * Loads normalize.json and search.json from the spec directory once and exposes them
+ * via [Spec.normalize] / [Spec.search]. The location of the spec directory is passed
+ * in by build.gradle.kts via
+ * `tasks.test { systemProperty("unfydqry.spec.dir", ...) }`.
  *
- * Swift / Rust 側と同じファイルを読むので、Rust コアの正規化が変わると 3 つの
- * テストランナが同時に同じ id で失敗する。
+ * Reads the same files as the Swift and Rust suites, so any drift in the Rust
+ * core's normalization causes all three test runners to fail at the same `id`
+ * simultaneously.
  */
 object Spec {
     const val EXPECTED_VERSION: Int = 1

@@ -2,15 +2,15 @@ import Foundation
 import Testing
 @testable import UnifiedQuery
 
-/// `SearchEngine` の **言語固有・非データ駋動** な性質をチェックする。
+/// Checks the **language-specific, non-data-driven** properties of `SearchEngine`.
 ///
-/// 入力→ヒット ID の素朴な対は `spec/search.json` と `SpecDrivenTests` 側に寄せて
-/// あるので、ここに残るのは:
-///   - score の sanity(LIKE 経路は 0、FTS5 経路は有限の非ゼロ)
-///   - 順序(bm25 昇順)
-///   - limit のカウント(どの ID が来るかは非決定)
-///   - 例外を出さないことの確認(FTS5 予約文字、空白だけのクエリ)
-///   - 並行検索(Mutex<Connection> 経由の直列化が落ちないこと)
+/// Plain (input → hit ID) pairs live in `spec/search.json` and `SpecDrivenTests`.
+/// What remains here:
+///   - score sanity (LIKE path returns 0; FTS5 path returns a finite non-zero score)
+///   - ordering (bm25 ascending)
+///   - limit count (which IDs come back is non-deterministic; the count isn't)
+///   - non-throwing safety (FTS5 reserved characters, whitespace-only queries)
+///   - concurrent search (serialization via Mutex<Connection> does not crash)
 @Suite("SearchEngine query (native-only)")
 struct SearchEngineQueryTests {
     private func fresh() throws -> SearchEngine {
@@ -20,7 +20,7 @@ struct SearchEngineQueryTests {
     // MARK: - Score sanity
 
     @Test func likeFallbackReturnsZeroScore() throws {
-        // LIKE 経路は score=0 を返す(設計書通り)。
+        // The LIKE path returns score=0 (as specified in the design doc).
         let e = try fresh()
         try e.index(id: 1, text: "がっこう")
         let hits = try e.search(query: "が", limit: 10)
@@ -42,13 +42,13 @@ struct SearchEngineQueryTests {
 
     @Test func resultsAreOrderedByBM25Ascending() throws {
         let e = try fresh()
-        // 3文字以上 → FTS5 経路。doc 長が異なると bm25 が動く。
+        // ≥3 chars → FTS5 path. Different doc lengths move bm25 around.
         try e.index(id: 1, text: "coffee")
         try e.index(id: 2, text: "coffee coffee coffee coffee coffee")
         try e.index(id: 3, text: String(repeating: "lorem ipsum dolor sit amet ", count: 20) + "coffee")
         let hits = try e.search(query: "coffee", limit: 10)
         #expect(hits.count == 3)
-        // bm25 は小さい(=負の絶対値が大きい)ほど上位。順序は単調増加。
+        // Smaller (= more negative) bm25 ranks higher. The series is monotonically non-decreasing.
         let scores = hits.map(\.score)
         #expect(scores == scores.sorted())
     }
@@ -70,7 +70,8 @@ struct SearchEngineQueryTests {
     @Test func whitespaceOnlyQueryDoesNotCrash() throws {
         let e = try fresh()
         try e.index(id: 1, text: "anything")
-        // " " は正規化後も1文字 → LIKE 経路だが空白マッチは無意味。例外なく返ることを担保。
+        // " " is one char after normalization → takes the LIKE path; matching whitespace is
+        // meaningless. We only assert that the call returns without throwing.
         let hits = try e.search(query: " ", limit: 10)
         #expect(hits.count >= 0)
     }
@@ -78,7 +79,7 @@ struct SearchEngineQueryTests {
     @Test func fts5SpecialCharactersDoNotCrash() throws {
         let e = try fresh()
         try e.index(id: 1, text: "alpha beta gamma")
-        // FTS5 構文の予約文字を含んでも、フレーズで包んでいるので落ちない。
+        // Reserved FTS5 syntax characters are safe because we wrap the query as a phrase.
         for q in ["alpha AND beta", "alpha OR beta", "alpha NEAR beta",
                   "alpha*", "(alpha)", "alpha:beta"] {
             _ = try e.search(query: q, limit: 10)
@@ -92,7 +93,8 @@ struct SearchEngineQueryTests {
         for i in Int64(1)...50 {
             try e.index(id: i, text: "coffee bean number \(i)")
         }
-        // Mutex<Connection> 経由で内部直列化される想定。並行呼び出しが落ちないことを担保。
+        // Calls are expected to be serialized internally via Mutex<Connection>. We only
+        // assert that concurrent invocations do not crash.
         await withTaskGroup(of: Int.self) { group in
             for _ in 0..<20 {
                 group.addTask {

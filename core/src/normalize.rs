@@ -2,13 +2,14 @@ use unicode_normalization::UnicodeNormalization;
 
 fn katakana_to_hiragana(c: char) -> char {
     match c as u32 {
-        // 濁点付き(ガ=U+30AC, ヴ=U+30F4 等)も -0x60 で正しく写る
+        // Dakuten-marked forms (ガ=U+30AC, ヴ=U+30F4 etc.) also map correctly via -0x60.
         0x30A1..=0x30F6 => char::from_u32(c as u32 - 0x60).unwrap_or(c),
         _ => c,
     }
 }
 
-/// 大小・全半角・かな種別を畳み込む。濁点/半濁点は保持する。
+/// Folds case, full-width/half-width, and kana variant (katakana → hiragana).
+/// Dakuten / handakuten are preserved (kept distinct).
 pub fn normalize_loose(input: &str) -> String {
     input
         .nfkc()
@@ -21,14 +22,14 @@ pub fn normalize_loose(input: &str) -> String {
 mod tests {
     use super::*;
 
-    // 設計書 §2.2 のトレース表をそのまま検証する。
+    // Verifies the trace table from design doc §2.2 verbatim.
     #[test]
     fn dakuten_kept_kana_unified() {
-        // 濁点ありは「が」に揃う
+        // With dakuten, everything collapses to「が」.
         for s in ["ガ", "が", "ｶﾞ"] {
             assert_eq!(normalize_loose(s), "が", "input={s}");
         }
-        // 濁点なしは「か」に揃う(「が」とは別キー)
+        // Without dakuten, everything collapses to「か」 (a different key from「が」).
         for s in ["カ", "か", "ｶ"] {
             assert_eq!(normalize_loose(s), "か", "input={s}");
         }
@@ -59,7 +60,7 @@ mod tests {
 
     #[test]
     fn mixed_string() {
-        // 「東京 ﾄｳｷｮｳ Tokyo」 →（漢字はそのまま）+ ひらがな化 + 小文字
+        // 「東京 ﾄｳｷｮｳ Tokyo」 → kanji passes through, kana → hiragana, ASCII → lowercase.
         let s = "東京 ﾄｳｷｮｳ Tokyo";
         let n = normalize_loose(s);
         assert_eq!(n, "東京 とうきょう tokyo");
