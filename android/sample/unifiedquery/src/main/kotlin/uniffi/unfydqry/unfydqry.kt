@@ -896,10 +896,10 @@ private fun uniffiCheckContractApiVersion(lib: UniffiLib) {
 
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: UniffiLib) {
-    if (lib.uniffi_unfydqry_checksum_func_normalizeloose() != 41915.toShort()) {
+    if (lib.uniffi_unfydqry_checksum_func_normalizeloose() != 38823.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_unfydqry_checksum_method_searchengine_index() != 21713.toShort()) {
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_index() != 52654.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_remove() != 54990.toShort()) {
