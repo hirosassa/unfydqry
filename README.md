@@ -27,18 +27,23 @@ unfydqry/
 ├── Package.swift                ← SwiftPM entry point, kept at repo root
 ├── core/                        Rust implementation (crate name: unfydqry)
 │   ├── Cargo.toml
-│   └── src/{lib,normalize,engine,bin/uniffi-bindgen}.rs
+│   ├── src/{lib,normalize,engine,bin/uniffi-bindgen}.rs
+│   └── tests/conformance.rs     spec-driven integration tests (see Tests)
+├── spec/                        cross-platform test specification (JSON)
+│   ├── README.md                schema and conventions
+│   ├── normalize.json           (input → expected) for normalizeLoose
+│   └── search.json              scenarios + seeded matrices for SearchEngine
 ├── ios/                         everything iOS-specific
 │   ├── UnifiedQuery.xcframework  build artifact (.gitignore)
 │   ├── Sources/UnifiedQuery/     SwiftPM library; binding is committed
-│   ├── Tests/UnifiedQueryTests/  Swift Testing (61 cases / 5 suites)
+│   ├── Tests/UnifiedQueryTests/  Swift Testing — 4 suites (see Tests)
 │   └── sample/                   SwiftUI sample app (consumes the package)
 ├── android/
 │   ├── jniLibs/                 libunfydqry.so produced by cargo-ndk (.gitignore)
 │   └── sample/                  Gradle root
 │       ├── settings.gradle.kts  include(":app", ":unifiedquery")
 │       ├── app/                 Compose sample app
-│       └── unifiedquery/        JVM Kotlin library + JUnit 5 (95 cases / 5 suites)
+│       └── unifiedquery/        JVM Kotlin library + JUnit 5 — 4 classes
 └── docs/
     ├── README.ja.md
     └── cross-platform-search-engine-design.md
@@ -112,7 +117,7 @@ val hits = engine.search("python", 50u)
 ### Rust core only
 ```sh
 cd core
-cargo test --lib                 # 15 cases
+cargo test --all-targets         # unit + conformance
 cargo build --release
 ```
 
@@ -124,7 +129,7 @@ cargo build --release
 bash scripts/build-xcframework.sh
 
 # Tests (Package.swift sees the local xcframework and uses it directly)
-swift test                       # 61 cases
+swift test
 
 # Sample app
 cd ios/sample
@@ -143,7 +148,7 @@ ANDROID_NDK_HOME=/path/to/ndk cargo ndk \
 # JVM unit tests (load the macOS arm64 dylib through JNA)
 cargo build --release --target aarch64-apple-darwin
 cd ../android/sample
-gradle :unifiedquery:test        # 95 cases
+gradle :unifiedquery:test
 
 # Sample app
 gradle :app:assembleDebug
@@ -152,16 +157,136 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## Tests
 
-| Runtime | Scope | Command | Count |
-|---|---|---|---|
-| Rust | Internal `normalize` / `engine` logic | `cd core && cargo test --lib` | 15 |
-| Swift Testing | Full public API on macOS / iOS simulator | `swift test` | 61 |
-| JUnit 5 (JVM) | The same scenarios re-validated from Kotlin | `cd android/sample && gradle :unifiedquery:test` | 95 |
+Three runners — `cargo test` (Rust), `swift test` (Swift Testing), and
+`gradle :unifiedquery:test` (JUnit 5 on JVM) — execute the same behavioural
+contract against the same Rust core. Each CI workflow runs independently and
+all three must stay green.
 
-`ios/Tests/UnifiedQueryTests/CrossPlatformGoldenTests.swift` and
-`android/sample/unifiedquery/src/test/kotlin/.../CrossPlatformGoldenTest.kt` share the
-**same normalization trace table and query matrix**, so any drift in the Rust core's
-normalization breaks both at once (the "golden tests" approach from §E.4 of the design doc).
+### Where every kind of test lives
+
+The suite is split into **four layers**, one purpose per layer. The same
+layering is reproduced on every platform — when a new platform is added it
+should follow exactly the same shape (see *Adding a new platform* below).
+
+| Layer | Lives in | What it covers | What it does **not** cover |
+|---|---|---|---|
+| 1. Rust unit | `core/src/{normalize,engine}.rs` (`#[cfg(test)] mod tests`) | Internal logic of the Rust core — has access to private items. | Anything that needs the FFI layer. |
+| 2. Spec-driven (cross-platform) | `spec/*.json` + per-platform loader | Pure `(input → expected)` and `(ops → ids)` cases shared by all runners. Drift in the Rust core fails the **same `id`** in all three CIs at once. | Property/inequality assertions, performance smoke, filesystem lifecycle, score sanity — none of these reduce to a plain equality on a value. |
+| 3. Native lifecycle | `*LifecycleTests` per platform | Opening / reopening / persisting / invalid-path on the language's actual I/O and error types. | Search behaviour. |
+| 4. Native query (non-data-driven) | `*QueryTests` / `*Tests` per platform | bm25 ordering, `limit` honouring, score sanity (`0.0` for LIKE, finite-nonzero for FTS5), non-throwing safety on FTS5 specials, concurrency smoke. | Anything expressible as `(input → expected)` — that belongs in `spec/`. |
+
+The principle: **if an assertion is a plain equality on a value, put it in
+`spec/`. Everything else stays in the native suite.** The spec README
+([`spec/README.md`](spec/README.md)) keeps the canonical list of what is and
+isn't in scope.
+
+### Running tests
+
+| Runner | Command | What it loads |
+|---|---|---|
+| Rust unit | `cd core && cargo test --lib` | `core/src/{normalize,engine}.rs` `#[cfg(test)]` modules |
+| Rust conformance | `cd core && cargo test --test conformance` | `core/tests/conformance.rs` → `../spec/*.json` |
+| Rust (all) | `cd core && cargo test --all-targets` | both of the above (matches CI) |
+| Swift Testing | `swift test` | `ios/Tests/UnifiedQueryTests/*.swift` (the `SpecLoader` walks up from `#filePath` to find `spec/`) |
+| JUnit 5 (JVM) | `cd android/sample && gradle :unifiedquery:test` | `unifiedquery/src/test/kotlin/.../*.kt` (gets `unfydqry.spec.dir` from `build.gradle.kts`) |
+
+### The `spec/` directory
+
+`spec/normalize.json` and `spec/search.json` are the **single source of truth
+for cross-platform behaviour**. Schema, conventions (versioning, `id`,
+`description`, scope rules) and intent are documented in
+[`spec/README.md`](spec/README.md). In short:
+
+- Every file is versioned (`"version": 1`). Loaders refuse to run if it
+  doesn't match the version they were written for — a future breaking schema
+  change cannot silently make tests pass by loading nothing.
+- Every case carries a stable snake-case `id` and a human-readable
+  `description`. Loaders must include both in every failure message so a CI
+  log alone is enough to diagnose the break.
+- `normalize.json` is a flat list of `(input, expected)` cases.
+- `search.json` has two sections: `scenarios` (a sequence of `ops` followed by
+  `assertions`) and `seeded_matrices` (one shared seed reused across many
+  queries — cheaper than re-seeding per query).
+- Hit-id comparisons are **order-insensitive** (set equality). Order is
+  asserted only by the native query suites, against bm25.
+
+### Per-platform test files
+
+iOS (`ios/Tests/UnifiedQueryTests/`):
+
+| File | Layer | Notes |
+|---|---|---|
+| `SpecLoader.swift` | infrastructure | Decodes `spec/*.json` into Swift structs. Locates `spec/` from `#filePath` (no SwiftPM resources). |
+| `SpecDrivenTests.swift` | 2 — spec-driven | Uses `@Test(arguments:)` to expand spec cases into one parameterized test each. |
+| `NormalizeTests.swift` | 4 — native (normalize) | Inequality (`が ≠ か`), idempotency, long-input smoke. |
+| `SearchEngineLifecycleTests.swift` | 3 — lifecycle | `:memory:`, file creation, reopen persistence, invalid-path throws, isolation between paths. |
+| `SearchEngineQueryTests.swift` | 4 — native (query) | bm25 ordering, `limit`, score sanity, FTS5 special chars, concurrency smoke via `withTaskGroup`. |
+
+Android (`android/sample/unifiedquery/src/test/kotlin/com/unfydqry/unifiedquery/`):
+
+| File | Layer | Notes |
+|---|---|---|
+| `Spec.kt` | infrastructure | Decodes `spec/*.json` via Jackson. Reads `unfydqry.spec.dir` set by `build.gradle.kts`. |
+| `SpecDrivenTest.kt` | 2 — spec-driven | `@ParameterizedTest` + `@MethodSource` mirrors the Swift expansion. |
+| `NormalizeTest.kt` | 4 — native (normalize) | Same inequality / idempotency / long-input cases as Swift. |
+| `SearchEngineLifecycleTest.kt` | 3 — lifecycle | Same shape as Swift, using `java.nio.file` and `SearchException`. |
+| `SearchEngineQueryTest.kt` | 4 — native (query) | bm25 ordering, `limit`, score sanity, FTS5 special chars, concurrency via `ExecutorService`. |
+
+Rust (`core/`):
+
+| File | Layer | Notes |
+|---|---|---|
+| `src/normalize.rs` `mod tests` | 1 — unit | Trace table from design doc §2.2; dakuten/handakuten distinctness. |
+| `src/engine.rs` `mod tests` | 1 — unit | Index / remove / reindex / LIKE fallback / quote escaping / empty query. |
+| `tests/conformance.rs` | 2 — spec-driven | Same `spec/*.json` as Swift and Kotlin, asserted directly on the in-process Rust API. Catches core drift independently of either binding. |
+
+The native query/lifecycle layer is intentionally **not** mirrored in the
+Rust integration tests — the Rust core has no FFI-specific lifecycle to
+exercise (no Swift `FileManager`, no JNA loader), and the bm25/ordering
+properties are covered by Swift+Kotlin which exercise the same code path.
+
+### Adding a new platform
+
+To bring up a new platform (e.g. Python via maturin, Node via napi-rs,
+Flutter, Wasm/JS, .NET) the test suite should keep the same four layers.
+Concretely:
+
+1. **Generate the UniFFI binding** for the new language and commit it,
+   following the same convention as Swift / Kotlin (binding co-located with
+   the language's library module; FFI native lib loaded by the language's
+   convention).
+2. **Add a spec loader** for that language. It should:
+   - Locate the repo's `spec/` directory (either via a build-system property
+     like the Kotlin side, or by walking up from the test file like the
+     Swift side, or via a relative path like the Rust integration test).
+   - Decode both JSON files into typed structs that match
+     [`spec/README.md`](spec/README.md) (`version`, `cases`,
+     `scenarios`, `seeded_matrices`, `ops` as a tagged union of
+     `index`/`remove`).
+   - Assert `version == EXPECTED_VERSION` and refuse to run if it doesn't —
+     this is what prevents a future schema bump from silently passing.
+3. **Translate the four `Spec*` tests** (`normalize cases`, `scenarios`,
+   `seeded_matrices`, plus the two `version` checks) into the language's
+   parameterized-test idiom. Each case must surface `id` + `description` in
+   the failure message — that's the load-bearing piece for cross-CI
+   debugging.
+4. **Translate the native layers** (lifecycle + query) by following the
+   Swift/Kotlin pairs as templates. They are deliberately written as
+   mirror images of each other so a third translation is straightforward.
+   Keep the **scope boundary** from the table above: anything reducible to
+   `(input → expected)` belongs in `spec/`, not here.
+5. **Wire a GitHub Actions workflow** modelled on
+   `.github/workflows/{swift,kotlin,rust}-tests.yml`. Trigger paths must
+   include `core/**` and `spec/**` so any change to the core or the spec
+   re-runs the new platform's CI too — this is what makes drift visible at
+   the same time across all platforms.
+6. **Extend `spec/`, not the native tests, when adding new behavioural
+   coverage** that all platforms should share. A new case lands in JSON once
+   and lights up in every CI on the next run.
+
+A change that breaks the Rust core should fail with **the same case `id`**
+on every platform simultaneously. If only one platform fails on a spec
+case, the loader on that platform is wrong — not the core.
 
 ## Releasing a new iOS xcframework
 
