@@ -728,6 +728,10 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -755,8 +759,12 @@ internal interface UniffiLib : Library {
     ): Pointer
     fun uniffi_unfydqry_fn_constructor_searchengine_withconfig(`dbPath`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
+    fun uniffi_unfydqry_fn_constructor_searchengine_withconfigrebuilding(`dbPath`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
     fun uniffi_unfydqry_fn_method_searchengine_index(`ptr`: Pointer,`id`: Long,`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    fun uniffi_unfydqry_fn_method_searchengine_reindex(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
     fun uniffi_unfydqry_fn_method_searchengine_remove(`ptr`: Pointer,`id`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_unfydqry_fn_method_searchengine_search(`ptr`: Pointer,`query`: RustBuffer.ByValue,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
@@ -883,6 +891,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_unfydqry_checksum_method_searchengine_index(
     ): Short
+    fun uniffi_unfydqry_checksum_method_searchengine_reindex(
+    ): Short
     fun uniffi_unfydqry_checksum_method_searchengine_remove(
     ): Short
     fun uniffi_unfydqry_checksum_method_searchengine_search(
@@ -890,6 +900,8 @@ internal interface UniffiLib : Library {
     fun uniffi_unfydqry_checksum_constructor_searchengine_new(
     ): Short
     fun uniffi_unfydqry_checksum_constructor_searchengine_withconfig(
+    ): Short
+    fun uniffi_unfydqry_checksum_constructor_searchengine_withconfigrebuilding(
     ): Short
     fun ffi_unfydqry_uniffi_contract_version(
     ): Int
@@ -917,6 +929,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_unfydqry_checksum_method_searchengine_index() != 36421.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_reindex() != 31136.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_remove() != 44114.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -926,7 +941,10 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_unfydqry_checksum_constructor_searchengine_new() != 487.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_unfydqry_checksum_constructor_searchengine_withconfig() != 51809.toShort()) {
+    if (lib.uniffi_unfydqry_checksum_constructor_searchengine_withconfig() != 18262.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_constructor_searchengine_withconfigrebuilding() != 47325.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -996,6 +1014,29 @@ public object FfiConverterUInt: FfiConverter<UInt, Int> {
 
     override fun write(value: UInt, buf: ByteBuffer) {
         buf.putInt(value.toInt())
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterULong: FfiConverter<ULong, Long> {
+    override fun lift(value: Long): ULong {
+        return value.toULong()
+    }
+
+    override fun read(buf: ByteBuffer): ULong {
+        return lift(buf.getLong())
+    }
+
+    override fun lower(value: ULong): Long {
+        return value.toLong()
+    }
+
+    override fun allocationSize(value: ULong) = 8UL
+
+    override fun write(value: ULong, buf: ByteBuffer) {
+        buf.putLong(value.toLong())
     }
 }
 
@@ -1272,6 +1313,11 @@ private class JavaLangRefCleanable(
  * and a search strategy. Add or update documents with `index`, drop them with
  * `remove`, and query with `search`. The instance is safe to share across
  * threads.
+ *
+ * The engine stores both the raw host text and its normalized form, so the
+ * index can be regenerated in place after a normalization change — explicitly
+ * via `reindex`, or automatically by opening with
+ * `SearchEngine.withConfigRebuilding(dbPath:config:)`.
  */
 public interface SearchEngineInterface {
     
@@ -1283,6 +1329,18 @@ public interface SearchEngineInterface {
      * Calling `index` again with an existing `id` overwrites that document.
      */
     fun `index`(`id`: kotlin.Long, `text`: kotlin.String)
+    
+    /**
+     * Regenerates the index by re-normalizing every stored document's raw text
+     * with this engine's current profile, then stamps that profile.
+     *
+     * Use this after changing the normalization profile (or its underlying
+     * rules) to bring already-indexed documents back in sync without the host
+     * re-feeding them. Documents indexed before raw text was retained have no
+     * raw to normalize and are skipped. Returns the number of documents
+     * regenerated.
+     */
+    fun `reindex`(): kotlin.ULong
     
     /**
      * Removes the document stored under `id`. A no-op if no such document
@@ -1311,6 +1369,11 @@ public interface SearchEngineInterface {
  * and a search strategy. Add or update documents with `index`, drop them with
  * `remove`, and query with `search`. The instance is safe to share across
  * threads.
+ *
+ * The engine stores both the raw host text and its normalized form, so the
+ * index can be regenerated in place after a normalization change — explicitly
+ * via `reindex`, or automatically by opening with
+ * `SearchEngine.withConfigRebuilding(dbPath:config:)`.
  */
 open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface {
 
@@ -1425,6 +1488,29 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface {
 
     
     /**
+     * Regenerates the index by re-normalizing every stored document's raw text
+     * with this engine's current profile, then stamps that profile.
+     *
+     * Use this after changing the normalization profile (or its underlying
+     * rules) to bring already-indexed documents back in sync without the host
+     * re-feeding them. Documents indexed before raw text was retained have no
+     * raw to normalize and are skipped. Returns the number of documents
+     * regenerated.
+     */
+    @Throws(SearchException::class)override fun `reindex`(): kotlin.ULong {
+            return FfiConverterULong.lift(
+    callWithPointer {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.INSTANCE.uniffi_unfydqry_fn_method_searchengine_reindex(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * Removes the document stored under `id`. A no-op if no such document
      * exists.
      */
@@ -1468,11 +1554,37 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface {
     /**
      * Opens the index with a host-selected combination of normalization
      * profile and search strategy.
+     *
+     * If the index already holds documents normalized under a *different*
+     * profile, this returns `ConfigMismatch` rather than silently mixing
+     * profiles. To regenerate the index under the new profile instead of
+     * failing, open with `withConfigRebuilding`, or call `reindex` on an
+     * engine opened with the matching profile.
      */
     @Throws(SearchException::class) fun `withConfig`(`dbPath`: kotlin.String, `config`: EngineConfig): SearchEngine {
             return FfiConverterTypeSearchEngine.lift(
     uniffiRustCallWithError(SearchException) { _status ->
     UniffiLib.INSTANCE.uniffi_unfydqry_fn_constructor_searchengine_withconfig(
+        FfiConverterString.lower(`dbPath`),FfiConverterTypeEngineConfig.lower(`config`),_status)
+}
+    )
+    }
+    
+
+        
+    /**
+     * Opens the index under `config`, regenerating it in place when the stored
+     * documents were normalized under a different profile.
+     *
+     * Unlike `withConfig`, a profile change is not an error here: the engine
+     * re-normalizes every stored document from its retained raw text under the
+     * new profile before returning. Documents indexed before raw text was
+     * retained cannot be regenerated and are left untouched.
+     */
+    @Throws(SearchException::class) fun `withConfigRebuilding`(`dbPath`: kotlin.String, `config`: EngineConfig): SearchEngine {
+            return FfiConverterTypeSearchEngine.lift(
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.INSTANCE.uniffi_unfydqry_fn_constructor_searchengine_withconfigrebuilding(
         FfiConverterString.lower(`dbPath`),FfiConverterTypeEngineConfig.lower(`config`),_status)
 }
     )

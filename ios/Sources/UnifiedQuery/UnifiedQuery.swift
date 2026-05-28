@@ -415,6 +415,22 @@ fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
+    typealias FfiType = UInt64
+    typealias SwiftType = UInt64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
     typealias FfiType = Int64
     typealias SwiftType = Int64
@@ -496,6 +512,11 @@ fileprivate struct FfiConverterString: FfiConverter {
  * and a search strategy. Add or update documents with `index`, drop them with
  * `remove`, and query with `search`. The instance is safe to share across
  * threads.
+ *
+ * The engine stores both the raw host text and its normalized form, so the
+ * index can be regenerated in place after a normalization change — explicitly
+ * via `reindex`, or automatically by opening with
+ * `SearchEngine.withConfigRebuilding(dbPath:config:)`.
  */
 public protocol SearchEngineProtocol : AnyObject {
     
@@ -507,6 +528,18 @@ public protocol SearchEngineProtocol : AnyObject {
      * Calling `index` again with an existing `id` overwrites that document.
      */
     func index(id: Int64, text: String) throws 
+    
+    /**
+     * Regenerates the index by re-normalizing every stored document's raw text
+     * with this engine's current profile, then stamps that profile.
+     *
+     * Use this after changing the normalization profile (or its underlying
+     * rules) to bring already-indexed documents back in sync without the host
+     * re-feeding them. Documents indexed before raw text was retained have no
+     * raw to normalize and are skipped. Returns the number of documents
+     * regenerated.
+     */
+    func reindex() throws  -> UInt64
     
     /**
      * Removes the document stored under `id`. A no-op if no such document
@@ -534,6 +567,11 @@ public protocol SearchEngineProtocol : AnyObject {
  * and a search strategy. Add or update documents with `index`, drop them with
  * `remove`, and query with `search`. The instance is safe to share across
  * threads.
+ *
+ * The engine stores both the raw host text and its normalized form, so the
+ * index can be regenerated in place after a normalization change — explicitly
+ * via `reindex`, or automatically by opening with
+ * `SearchEngine.withConfigRebuilding(dbPath:config:)`.
  */
 open class SearchEngine:
     SearchEngineProtocol {
@@ -598,10 +636,34 @@ public convenience init(dbPath: String)throws  {
     /**
      * Opens the index with a host-selected combination of normalization
      * profile and search strategy.
+     *
+     * If the index already holds documents normalized under a *different*
+     * profile, this returns `ConfigMismatch` rather than silently mixing
+     * profiles. To regenerate the index under the new profile instead of
+     * failing, open with `withConfigRebuilding`, or call `reindex` on an
+     * engine opened with the matching profile.
      */
 public static func withConfig(dbPath: String, config: EngineConfig)throws  -> SearchEngine {
     return try  FfiConverterTypeSearchEngine.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
     uniffi_unfydqry_fn_constructor_searchengine_withconfig(
+        FfiConverterString.lower(dbPath),
+        FfiConverterTypeEngineConfig.lower(config),$0
+    )
+})
+}
+    
+    /**
+     * Opens the index under `config`, regenerating it in place when the stored
+     * documents were normalized under a different profile.
+     *
+     * Unlike `withConfig`, a profile change is not an error here: the engine
+     * re-normalizes every stored document from its retained raw text under the
+     * new profile before returning. Documents indexed before raw text was
+     * retained cannot be regenerated and are left untouched.
+     */
+public static func withConfigRebuilding(dbPath: String, config: EngineConfig)throws  -> SearchEngine {
+    return try  FfiConverterTypeSearchEngine.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
+    uniffi_unfydqry_fn_constructor_searchengine_withconfigrebuilding(
         FfiConverterString.lower(dbPath),
         FfiConverterTypeEngineConfig.lower(config),$0
     )
@@ -623,6 +685,23 @@ open func index(id: Int64, text: String)throws  {try rustCallWithError(FfiConver
         FfiConverterString.lower(text),$0
     )
 }
+}
+    
+    /**
+     * Regenerates the index by re-normalizing every stored document's raw text
+     * with this engine's current profile, then stamps that profile.
+     *
+     * Use this after changing the normalization profile (or its underlying
+     * rules) to bring already-indexed documents back in sync without the host
+     * re-feeding them. Documents indexed before raw text was retained have no
+     * raw to normalize and are skipped. Returns the number of documents
+     * regenerated.
+     */
+open func reindex()throws  -> UInt64 {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
+    uniffi_unfydqry_fn_method_searchengine_reindex(self.uniffiClonePointer(),$0
+    )
+})
 }
     
     /**
@@ -1243,6 +1322,9 @@ private var initializationResult: InitializationResult = {
     if (uniffi_unfydqry_checksum_method_searchengine_index() != 36421) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_unfydqry_checksum_method_searchengine_reindex() != 31136) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_unfydqry_checksum_method_searchengine_remove() != 44114) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1252,7 +1334,10 @@ private var initializationResult: InitializationResult = {
     if (uniffi_unfydqry_checksum_constructor_searchengine_new() != 487) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_constructor_searchengine_withconfig() != 51809) {
+    if (uniffi_unfydqry_checksum_constructor_searchengine_withconfig() != 18262) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_constructor_searchengine_withconfigrebuilding() != 47325) {
         return InitializationResult.apiChecksumMismatch
     }
 
