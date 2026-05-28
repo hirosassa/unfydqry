@@ -113,6 +113,18 @@ class MainActivity : ComponentActivity() {
             Record(8L, "ぱんだ と ﾊﾟﾝﾀﾞ"),
             Record(9L, "コーヒーサーバー"),
             Record(10L, "café オレ"),
+            Record(11L, "プリンター ドライバー"),
+            Record(12L, "データベース サーバー"),
+            Record(13L, "ﾊﾝﾊﾞｰｶﾞｰ ショップ"),
+            Record(14L, "résumé を書く"),
+            Record(15L, "Pokémon GO"),
+            Record(16L, "時々 雨のち晴れ"),
+            Record(17L, "人々 の声"),
+            Record(18L, "いすゞ 自動車"),
+            Record(19L, "こゝろ 夏目漱石"),
+            Record(20L, "東京–大阪 新幹線"),
+            Record(21L, "予算 1,000,000 円"),
+            Record(22L, "在庫 1,234 個"),
         )
         docs.forEach { engine.index(it.id, it.text) }
         return docs.associateBy { it.id }

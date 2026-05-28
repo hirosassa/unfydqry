@@ -162,7 +162,19 @@ final class SearchModel: ObservableObject {
             Record(id: 7, text: "Ｐｙｔｈｏｎ 入門"),
             Record(id: 8, text: "ぱんだ と ﾊﾟﾝﾀﾞ"),
             Record(id: 9, text: "コーヒーサーバー"),
-            Record(id: 10, text: "café オレ")
+            Record(id: 10, text: "café オレ"),
+            Record(id: 11, text: "プリンター ドライバー"),
+            Record(id: 12, text: "データベース サーバー"),
+            Record(id: 13, text: "ﾊﾝﾊﾞｰｶﾞｰ ショップ"),
+            Record(id: 14, text: "résumé を書く"),
+            Record(id: 15, text: "Pokémon GO"),
+            Record(id: 16, text: "時々 雨のち晴れ"),
+            Record(id: 17, text: "人々 の声"),
+            Record(id: 18, text: "いすゞ 自動車"),
+            Record(id: 19, text: "こゝろ 夏目漱石"),
+            Record(id: 20, text: "東京–大阪 新幹線"),
+            Record(id: 21, text: "予算 1,000,000 円"),
+            Record(id: 22, text: "在庫 1,234 個")
         ]
         for record in seed {
             try? engine.index(id: record.id, text: record.text)
