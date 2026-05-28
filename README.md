@@ -17,7 +17,7 @@ Design rationale lives in [`docs/cross-platform-search-engine-design.md`](docs/c
 - **Pluggable behaviour**: the host binding picks a *normalization profile* and a *search algorithm*, and the engine combines them. Both implementations live in one Rust core, so any chosen combination behaves identically on iOS and Android — see [Configuring behaviour](#configuring-behaviour).
 - **Fuzziness axes that get folded** (default `loose` profile): case, full-width / half-width, kana variant (katakana ↔ hiragana).
 - **Dakuten / handakuten are kept distinct** (`か` and `が` are different keys).
-- **Default search** is a SQLite FTS5 + trigram index ranked by `bm25`; `substring` and `prefix` algorithms are also selectable.
+- **Default search** is a SQLite FTS5 + trigram index ranked by `bm25`; substring, prefix, suffix, all-terms, and fuzzy (trigram / Levenshtein / Damerau-Levenshtein) algorithms are also selectable.
 - Searches return only the stable `id` and a score; the host re-fetches records from its source-of-truth store.
 - Because the logic lives in **one Rust implementation**, iOS and Android behaviour matches by construction, not by convention.
 
@@ -32,7 +32,7 @@ unfydqry/
 │   ├── src/config.rs           NormalizeProfile / SearchStrategy / EngineConfig
 │   ├── src/engine.rs           SearchEngine (index/search/remove, profile fingerprint)
 │   ├── src/normalize/          swappable normalization profiles
-│   ├── src/search/             swappable query algorithms (trigram_bm25/substring/prefix)
+│   ├── src/search/             swappable query algorithms (trigram_bm25/substring/prefix/suffix/all_terms/fuzzy_trigram/levenshtein/damerau_levenshtein)
 │   ├── src/bin/uniffi-bindgen.rs
 │   └── tests/conformance.rs     spec-driven integration tests (see Tests)
 ├── spec/                        cross-platform test specification (JSON)
@@ -136,15 +136,21 @@ Both profiles keep dakuten / handakuten distinct (`か` ≠ `が`).
 
 Every algorithm runs against the already-normalized text and returns `(id, score)`.
 
-| Strategy | Matches | SQL | Score | Best for |
+| Strategy | Matches | How | Score | Best for |
 |---|---|---|---|---|
 | `trigram_bm25` (default) | the whole query as a phrase, anywhere in the text | FTS5 trigram index + `bm25()` | bm25 relevance (lower = more relevant) | General-purpose **ranked** full-text search. |
 | `substring` | the query anywhere in the text | `LIKE '%q%'` | `0.0` (unranked) | "Contains" matching where short (1–2 char) queries must also hit and ranking doesn't matter. |
 | `prefix` | text that **starts with** the query | `LIKE 'q%'` | `0.0` (unranked) | Type-ahead / autocomplete suggestions. |
+| `suffix` | text that **ends with** the query | `LIKE '%q'` | `0.0` (unranked) | "Ends-with" matching (e.g. file extensions, honorific suffixes). |
+| `all_terms` | docs containing **every** whitespace-separated term, in any order | `LIKE '%t%'` AND-ed per term | `0.0` (unranked) | Multi-word queries where word order is irrelevant (unlike `substring`, which needs the literal run including spaces). |
+| `fuzzy_trigram` | docs whose character-trigram set is similar enough to the query (Jaccard ≥ threshold) | trigram set similarity, computed in Rust | `1 − similarity` (lower = more similar; exact = `0.0`) | Typo tolerance without a full edit-distance scan. |
+| `levenshtein` | docs with a word within an edit-distance threshold of the query | min Levenshtein distance to any word, in Rust | edit distance (lower = better) | Typo-tolerant matching of a single word/term. |
+| `damerau_levenshtein` | same as `levenshtein`, but an adjacent transposition counts as one edit | min OSA distance to any word, in Rust | edit distance (lower = better) | Typo tolerance that also forgives swapped neighbouring characters (`tokoy` ↔ `tokyo`). |
 
 Notes:
-- `trigram_bm25` is the only ranked strategy. Trigram indexing cannot match queries shorter than 3 characters, so those automatically fall back to a substring `LIKE` (with score `0.0`).
-- `substring` and `prefix` are unranked: they return matches in storage order with a constant `0.0` score. Use `limit` to cap results.
+- **Ranked** strategies are `trigram_bm25` (by bm25), `fuzzy_trigram` (by similarity), and `levenshtein` / `damerau_levenshtein` (by distance). `substring`, `prefix`, `suffix`, and `all_terms` are unranked (constant `0.0`, storage order) — use `limit` to cap results.
+- `trigram_bm25` cannot match queries shorter than 3 characters, so those automatically fall back to a substring `LIKE` (score `0.0`).
+- The fuzzy strategies need no extra index, crate, or SQLite extension: trigram sets and edit distances are computed in Rust over the normalized text (per Unicode codepoint, so Japanese compares correctly). The edit-distance threshold scales with query length (1 edit per 4 characters, minimum 1).
 
 ### Selecting a combination
 
