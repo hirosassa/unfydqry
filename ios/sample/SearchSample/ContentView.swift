@@ -1,3 +1,4 @@
+import Combine
 import UnifiedQuery
 import SwiftUI
 
@@ -82,6 +83,8 @@ private func looseOptions() -> NormalizeOptions {
 
 @MainActor
 final class SearchModel: ObservableObject {
+    /// Bound to the standard search bar (`.searchable`); changes drive an
+    /// incremental, debounced search.
     @Published var query: String = ""
     @Published var status: String = ""
     @Published var results: [Record] = []
@@ -98,6 +101,7 @@ final class SearchModel: ObservableObject {
     private let dbPath: String
     /// The engine returns only IDs and scores, so the host side maps id → Record.
     private var store: [Int64: Record] = [:]
+    private var cancellables = Set<AnyCancellable>()
 
     init() {
         let url = FileManager.default
@@ -111,7 +115,16 @@ final class SearchModel: ObservableObject {
         } catch {
             fatalError("open SearchEngine failed: \(error)")
         }
-        seedIfNeeded()
+        seed()
+        // Incremental search: debounce keystrokes so a search runs shortly after
+        // typing settles rather than on every character.
+        $query
+            .debounce(for: .milliseconds(150), scheduler: RunLoop.main)
+            .removeDuplicates()
+            .sink { [weak self] _ in self?.search() }
+            .store(in: &cancellables)
+        search() // show all docs immediately for the initial empty query
+        applyEnvHooks()
     }
 
     /// Opens the index for the given composable options. Changing the enabled
@@ -132,14 +145,13 @@ final class SearchModel: ObservableObject {
             engine = try SearchModel.makeEngine(
                 options: options, strategy: strategy.ffi, dbPath: dbPath
             )
-            status = "rebuilt under current settings"
-            if !query.isEmpty { search() }
+            search()
         } catch {
             status = "reconfigure error: \(error)"
         }
     }
 
-    private func seedIfNeeded() {
+    private func seed() {
         let seed: [Record] = [
             Record(id: 1, text: "東京タワー"),
             Record(id: 2, text: "とうきょうスカイツリー"),
@@ -157,23 +169,55 @@ final class SearchModel: ObservableObject {
             store[record.id] = record
         }
         status = "indexed \(seed.count) docs"
-        // UI-test hooks: preselect steps and/or run a query on launch. Setting
-        // `options`/`strategy` after init triggers the same reconfigure path as
-        // toggling the controls. SEARCH_OPTIONS is a comma-separated step id list.
+    }
+
+    /// Explicitly regenerates the index from the retained raw text under the
+    /// current settings (distinct from the automatic rebuild on a settings
+    /// change). Useful after the normalization rules themselves change.
+    func reindex() {
+        do {
+            let count = try engine.reindex()
+            status = "reindexed \(count) docs"
+            search()
+        } catch {
+            status = "reindex error: \(error)"
+        }
+    }
+
+    func search() {
+        guard !query.isEmpty else {
+            // Empty query → show every indexed document (sorted by id for stability).
+            results = store.values.sorted { $0.id < $1.id }
+            status = "全件表示 (\(results.count))"
+            return
+        }
+        do {
+            let hits = try engine.search(query: query, limit: 50)
+            results = hits.compactMap { store[$0.id] }
+            let normalized = normalizeWithOptions(input: query, options: options)
+            status = "hits: \(results.count)  normalized=\u{0022}\(normalized)\u{0022}"
+        } catch {
+            status = "error: \(error)"
+            results = []
+        }
+    }
+
+    /// UI-test hooks: preselect steps/strategy and/or a query on launch.
+    /// SEARCH_OPTIONS is a comma-separated step id list (see `optionToggles`).
+    private func applyEnvHooks() {
         let env = ProcessInfo.processInfo.environment
-        if env["SEARCH_AUTO_QUERY"] != nil || env["SEARCH_OPTIONS"] != nil || env["SEARCH_STRATEGY"] != nil {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                guard let self else { return }
-                if let raw = env["SEARCH_OPTIONS"] {
-                    self.options = SearchModel.parseOptions(raw)
-                }
-                if let s = env["SEARCH_STRATEGY"].flatMap(StrategyOption.init(rawValue:)) {
-                    self.strategy = s
-                }
-                if let auto = env["SEARCH_AUTO_QUERY"] {
-                    self.query = auto
-                }
-                self.search()
+        guard env["SEARCH_AUTO_QUERY"] != nil || env["SEARCH_OPTIONS"] != nil
+            || env["SEARCH_STRATEGY"] != nil else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            if let raw = env["SEARCH_OPTIONS"] {
+                self.options = SearchModel.parseOptions(raw)
+            }
+            if let s = env["SEARCH_STRATEGY"].flatMap(StrategyOption.init(rawValue:)) {
+                self.strategy = s
+            }
+            if let auto = env["SEARCH_AUTO_QUERY"] {
+                self.query = auto
             }
         }
     }
@@ -191,35 +235,56 @@ final class SearchModel: ObservableObject {
         }
         return options
     }
-
-    func search() {
-        do {
-            let hits = try engine.search(query: query, limit: 50)
-            results = hits.compactMap { store[$0.id] }
-            let normalized = normalizeWithOptions(input: query, options: options)
-            status = "hits: \(results.count)  normalized=\u{0022}\(normalized)\u{0022}"
-        } catch {
-            status = "error: \(error)"
-            results = []
-        }
-    }
-
-    /// Explicitly regenerates the index from the retained raw text under the
-    /// current settings (distinct from the automatic rebuild on a settings
-    /// change). Useful after the normalization rules themselves change.
-    func reindex() {
-        do {
-            let count = try engine.reindex()
-            status = "reindexed \(count) docs"
-            if !query.isEmpty { search() }
-        } catch {
-            status = "reindex error: \(error)"
-        }
-    }
 }
 
 struct ContentView: View {
     @StateObject private var model = SearchModel()
+    // UI-test hook: open the settings sheet on launch when SEARCH_SHOW_SETTINGS is set.
+    @State private var showSettings =
+        ProcessInfo.processInfo.environment["SEARCH_SHOW_SETTINGS"] != nil
+
+    var body: some View {
+        NavigationStack {
+            List(model.results) { record in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(record.text).font(.body)
+                    Text("id=\(record.id)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            .navigationTitle("SearchSample")
+            .searchable(text: $model.query, prompt: "全角/半角/カナ/ひら、なんでも")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showSettings = true } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .accessibilityLabel("設定")
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                Text(model.status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.vertical, 6)
+                    .background(.bar)
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsView(model: model)
+            }
+        }
+    }
+}
+
+/// Modal settings: normalization step toggles, the search algorithm, and an
+/// explicit index-regeneration button.
+struct SettingsView: View {
+    @ObservedObject var model: SearchModel
+    @Environment(\.dismiss) private var dismiss
 
     private func binding(_ keyPath: WritableKeyPath<NormalizeOptions, Bool>) -> Binding<Bool> {
         Binding(
@@ -237,35 +302,24 @@ struct ContentView: View {
                             .font(.callout)
                     }
                 }
-                Section("検索") {
+                Section("検索アルゴリズム") {
                     Picker("アルゴリズム", selection: $model.strategy) {
                         ForEach(StrategyOption.allCases) { Text($0.label).tag($0) }
                     }
-                    TextField("検索クエリ(全角/半角/カナ/ひら、なんでも)", text: $model.query)
-                        .onSubmit { model.search() }
-                    HStack {
-                        Button("検索") { model.search() }
-                        Spacer()
-                        Button("インデックス再生成") { model.reindex() }
-                            .tint(.secondary)
-                    }
-                    Text(model.status)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
-                Section("結果") {
-                    ForEach(model.results) { record in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(record.text).font(.body)
-                            Text("id=\(record.id)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                        }
-                    }
+                Section {
+                    Button("インデックス再生成") { model.reindex() }
+                } footer: {
+                    Text("保存済みの生テキストから現在の設定で再生成します。")
                 }
             }
-            .navigationTitle("SearchSample")
+            .navigationTitle("設定")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完了") { dismiss() }
+                }
+            }
         }
     }
 }
