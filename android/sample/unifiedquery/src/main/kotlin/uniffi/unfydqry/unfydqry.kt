@@ -732,6 +732,12 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -761,6 +767,10 @@ internal interface UniffiLib : Library {
     ): Pointer
     fun uniffi_unfydqry_fn_constructor_searchengine_withconfigrebuilding(`dbPath`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
+    fun uniffi_unfydqry_fn_constructor_searchengine_withoptions(`dbPath`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
+    fun uniffi_unfydqry_fn_constructor_searchengine_withoptionsrebuilding(`dbPath`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
     fun uniffi_unfydqry_fn_method_searchengine_index(`ptr`: Pointer,`id`: Long,`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_unfydqry_fn_method_searchengine_reindex(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
@@ -770,6 +780,8 @@ internal interface UniffiLib : Library {
     fun uniffi_unfydqry_fn_method_searchengine_search(`ptr`: Pointer,`query`: RustBuffer.ByValue,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_unfydqry_fn_func_normalizeloose(`input`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_unfydqry_fn_func_normalizewithoptions(`input`: RustBuffer.ByValue,`options`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_unfydqry_fn_func_normalizewithprofile(`input`: RustBuffer.ByValue,`profile`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -887,6 +899,8 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_unfydqry_checksum_func_normalizeloose(
     ): Short
+    fun uniffi_unfydqry_checksum_func_normalizewithoptions(
+    ): Short
     fun uniffi_unfydqry_checksum_func_normalizewithprofile(
     ): Short
     fun uniffi_unfydqry_checksum_method_searchengine_index(
@@ -902,6 +916,10 @@ internal interface UniffiLib : Library {
     fun uniffi_unfydqry_checksum_constructor_searchengine_withconfig(
     ): Short
     fun uniffi_unfydqry_checksum_constructor_searchengine_withconfigrebuilding(
+    ): Short
+    fun uniffi_unfydqry_checksum_constructor_searchengine_withoptions(
+    ): Short
+    fun uniffi_unfydqry_checksum_constructor_searchengine_withoptionsrebuilding(
     ): Short
     fun ffi_unfydqry_uniffi_contract_version(
     ): Int
@@ -921,6 +939,9 @@ private fun uniffiCheckContractApiVersion(lib: UniffiLib) {
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_unfydqry_checksum_func_normalizeloose() != 36363.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_func_normalizewithoptions() != 33141.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_func_normalizewithprofile() != 49347.toShort()) {
@@ -945,6 +966,12 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_constructor_searchengine_withconfigrebuilding() != 47325.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_constructor_searchengine_withoptions() != 4538.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_constructor_searchengine_withoptionsrebuilding() != 9643.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1083,6 +1110,29 @@ public object FfiConverterDouble: FfiConverter<Double, Double> {
 
     override fun write(value: Double, buf: ByteBuffer) {
         buf.putDouble(value)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterBoolean: FfiConverter<Boolean, Byte> {
+    override fun lift(value: Byte): Boolean {
+        return value.toInt() != 0
+    }
+
+    override fun read(buf: ByteBuffer): Boolean {
+        return lift(buf.get())
+    }
+
+    override fun lower(value: Boolean): Byte {
+        return if (value) 1.toByte() else 0.toByte()
+    }
+
+    override fun allocationSize(value: Boolean) = 1UL
+
+    override fun write(value: Boolean, buf: ByteBuffer) {
+        buf.put(lower(value))
     }
 }
 
@@ -1592,6 +1642,39 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface {
     
 
         
+    /**
+     * Like `withConfig`, but selects normalization with a composable
+     * `NormalizeOptions` set instead of a named preset. A fingerprint mismatch
+     * with the stored index is a `ConfigMismatch`; use `withOptionsRebuilding`
+     * to regenerate instead.
+     */
+    @Throws(SearchException::class) fun `withOptions`(`dbPath`: kotlin.String, `config`: EngineOptionsConfig): SearchEngine {
+            return FfiConverterTypeSearchEngine.lift(
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.INSTANCE.uniffi_unfydqry_fn_constructor_searchengine_withoptions(
+        FfiConverterString.lower(`dbPath`),FfiConverterTypeEngineOptionsConfig.lower(`config`),_status)
+}
+    )
+    }
+    
+
+        
+    /**
+     * Like `withConfigRebuilding`, but selects normalization with a composable
+     * `NormalizeOptions` set. A change in the enabled steps regenerates the
+     * index in place from the retained raw text.
+     */
+    @Throws(SearchException::class) fun `withOptionsRebuilding`(`dbPath`: kotlin.String, `config`: EngineOptionsConfig): SearchEngine {
+            return FfiConverterTypeSearchEngine.lift(
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.INSTANCE.uniffi_unfydqry_fn_constructor_searchengine_withoptionsrebuilding(
+        FfiConverterString.lower(`dbPath`),FfiConverterTypeEngineOptionsConfig.lower(`config`),_status)
+}
+    )
+    }
+    
+
+        
     }
     
 }
@@ -1668,6 +1751,49 @@ public object FfiConverterTypeEngineConfig: FfiConverterRustBuffer<EngineConfig>
 
 
 /**
+ * Like [`EngineConfig`], but selects normalization with a composable
+ * [`NormalizeOptions`] set instead of a named preset. Used by the
+ * `withOptions` / `withOptionsRebuilding` constructors.
+ */
+data class EngineOptionsConfig (
+    /**
+     * The composable normalization steps applied at index and query time.
+     */
+    var `normalize`: NormalizeOptions, 
+    /**
+     * Which query algorithm `SearchEngine.search` uses.
+     */
+    var `strategy`: SearchStrategy
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeEngineOptionsConfig: FfiConverterRustBuffer<EngineOptionsConfig> {
+    override fun read(buf: ByteBuffer): EngineOptionsConfig {
+        return EngineOptionsConfig(
+            FfiConverterTypeNormalizeOptions.read(buf),
+            FfiConverterTypeSearchStrategy.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: EngineOptionsConfig) = (
+            FfiConverterTypeNormalizeOptions.allocationSize(value.`normalize`) +
+            FfiConverterTypeSearchStrategy.allocationSize(value.`strategy`)
+    )
+
+    override fun write(value: EngineOptionsConfig, buf: ByteBuffer) {
+            FfiConverterTypeNormalizeOptions.write(value.`normalize`, buf)
+            FfiConverterTypeSearchStrategy.write(value.`strategy`, buf)
+    }
+}
+
+
+
+/**
  * A single search result: the stable `id` the host indexed under, plus a
  * relevance `score`.
  *
@@ -1710,6 +1836,92 @@ public object FfiConverterTypeHit: FfiConverterRustBuffer<Hit> {
     override fun write(value: Hit, buf: ByteBuffer) {
             FfiConverterLong.write(value.`id`, buf)
             FfiConverterDouble.write(value.`score`, buf)
+    }
+}
+
+
+
+/**
+ * A composable set of normalization steps, all opt-in on top of the always-on
+ * NFKC foundation. The engine applies the enabled steps in a fixed canonical
+ * order (see `normalize/mod.rs`), so any combination is deterministic and
+ * identical across platforms.
+ */
+data class NormalizeOptions (
+    /**
+     * Fold case via `char::to_lowercase`.
+     */
+    var `lowercase`: kotlin.Boolean = false, 
+    /**
+     * Map katakana to hiragana (カ → か); dakuten stays distinct.
+     */
+    var `kanaFold`: kotlin.Boolean = false, 
+    /**
+     * Strip Latin/Western combining diacritics (café → cafe).
+     */
+    var `foldDiacritics`: kotlin.Boolean = false, 
+    /**
+     * Fold the prolonged-sound mark after kana (サーバー → サーバ).
+     */
+    var `foldChoonpu`: kotlin.Boolean = false, 
+    /**
+     * Expand iteration marks (時々 → 時時, こゞ → こご).
+     */
+    var `expandIterationMarks`: kotlin.Boolean = false, 
+    /**
+     * Unify the dash/hyphen family to ASCII `-`.
+     */
+    var `normalizeHyphens`: kotlin.Boolean = false, 
+    /**
+     * Remove digit-grouping commas (1,000 → 1000).
+     */
+    var `stripDigitGrouping`: kotlin.Boolean = false, 
+    /**
+     * Collapse whitespace runs to a single space and trim.
+     */
+    var `collapseWhitespace`: kotlin.Boolean = false
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeNormalizeOptions: FfiConverterRustBuffer<NormalizeOptions> {
+    override fun read(buf: ByteBuffer): NormalizeOptions {
+        return NormalizeOptions(
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: NormalizeOptions) = (
+            FfiConverterBoolean.allocationSize(value.`lowercase`) +
+            FfiConverterBoolean.allocationSize(value.`kanaFold`) +
+            FfiConverterBoolean.allocationSize(value.`foldDiacritics`) +
+            FfiConverterBoolean.allocationSize(value.`foldChoonpu`) +
+            FfiConverterBoolean.allocationSize(value.`expandIterationMarks`) +
+            FfiConverterBoolean.allocationSize(value.`normalizeHyphens`) +
+            FfiConverterBoolean.allocationSize(value.`stripDigitGrouping`) +
+            FfiConverterBoolean.allocationSize(value.`collapseWhitespace`)
+    )
+
+    override fun write(value: NormalizeOptions, buf: ByteBuffer) {
+            FfiConverterBoolean.write(value.`lowercase`, buf)
+            FfiConverterBoolean.write(value.`kanaFold`, buf)
+            FfiConverterBoolean.write(value.`foldDiacritics`, buf)
+            FfiConverterBoolean.write(value.`foldChoonpu`, buf)
+            FfiConverterBoolean.write(value.`expandIterationMarks`, buf)
+            FfiConverterBoolean.write(value.`normalizeHyphens`, buf)
+            FfiConverterBoolean.write(value.`stripDigitGrouping`, buf)
+            FfiConverterBoolean.write(value.`collapseWhitespace`, buf)
     }
 }
 
@@ -1955,6 +2167,20 @@ public object FfiConverterSequenceTypeHit: FfiConverterRustBuffer<List<Hit>> {
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_unfydqry_fn_func_normalizeloose(
         FfiConverterString.lower(`input`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Normalizes `input` with a composable `NormalizeOptions` set — the same
+         * transform the engine applies when opened via `withOptions`. Exposed so a
+         * host can preview how a string folds under a given combination of steps.
+         */ fun `normalizeWithOptions`(`input`: kotlin.String, `options`: NormalizeOptions): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_unfydqry_fn_func_normalizewithoptions(
+        FfiConverterString.lower(`input`),FfiConverterTypeNormalizeOptions.lower(`options`),_status)
 }
     )
     }

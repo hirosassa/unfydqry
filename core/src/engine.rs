@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::config::{EngineConfig, NormalizeProfile};
-use crate::normalize::{build_normalizer, Normalizer};
+use crate::config::{EngineConfig, EngineOptionsConfig, NormalizeOptions, SearchStrategy};
+use crate::normalize::{build_normalizer_options, Normalizer};
 use crate::search::{build_strategy, SearchAlgorithm};
 
 /// A single search result: the stable `id` the host indexed under, plus a
@@ -62,7 +62,7 @@ pub struct SearchEngine {
     conn: Mutex<Connection>,
     normalizer: Box<dyn Normalizer>,
     strategy: Box<dyn SearchAlgorithm>,
-    profile: NormalizeProfile,
+    options: NormalizeOptions,
 }
 
 impl SearchEngine {
@@ -122,22 +122,61 @@ impl SearchEngine {
         Ok(Some(stored.unwrap_or_else(|| "loose".to_string())))
     }
 
-    /// Records `profile` as the index's normalize profile.
-    fn stamp_profile(conn: &Connection, profile: &str) -> Result<(), SearchError> {
+    /// Records `key` as the index's normalize fingerprint.
+    fn stamp_profile(conn: &Connection, key: &str) -> Result<(), SearchError> {
         conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES ('normalize_profile', ?1)",
-            params![profile],
+            params![key],
         )?;
         Ok(())
     }
 
-    fn assemble(conn: Connection, config: EngineConfig) -> Arc<Self> {
+    fn assemble(
+        conn: Connection,
+        options: NormalizeOptions,
+        strategy: SearchStrategy,
+    ) -> Arc<Self> {
         Arc::new(Self {
             conn: Mutex::new(conn),
-            normalizer: build_normalizer(config.normalize),
-            strategy: build_strategy(config.strategy),
-            profile: config.normalize,
+            normalizer: build_normalizer_options(options),
+            strategy: build_strategy(strategy),
+            options,
         })
+    }
+
+    /// Shared open path for all constructors. Opens the schema, enforces the
+    /// normalize-fingerprint policy, and assembles the engine.
+    ///
+    /// When `rebuild` is false a fingerprint mismatch is a `ConfigMismatch`
+    /// error; when true the index is regenerated in place from the retained raw
+    /// text under the new options instead.
+    fn open(
+        db_path: &str,
+        options: NormalizeOptions,
+        strategy: SearchStrategy,
+        rebuild: bool,
+    ) -> Result<Arc<Self>, SearchError> {
+        let conn = Self::open_schema(db_path)?;
+        let requested = options.fingerprint();
+        let stored = Self::stored_profile(&conn)?;
+        let mismatch = stored.as_deref().is_some_and(|s| s != requested);
+
+        if mismatch && !rebuild {
+            return Err(SearchError::ConfigMismatch {
+                stored: stored.unwrap(),
+                requested,
+            });
+        }
+
+        let engine = Self::assemble(conn, options, strategy);
+        if mismatch {
+            // `reindex` re-normalizes from raw and stamps the new fingerprint.
+            engine.reindex()?;
+        } else {
+            let conn = engine.conn.lock().unwrap();
+            Self::stamp_profile(&conn, &requested)?;
+        }
+        Ok(engine)
     }
 }
 
@@ -160,21 +199,7 @@ impl SearchEngine {
     /// engine opened with the matching profile.
     #[uniffi::constructor(name = "withConfig")]
     pub fn with_config(db_path: String, config: EngineConfig) -> Result<Arc<Self>, SearchError> {
-        let conn = Self::open_schema(&db_path)?;
-        let requested = config.normalize.as_key();
-        if let Some(stored) = Self::stored_profile(&conn)? {
-            // The normalized text stored in the index depends on the normalize
-            // profile, so an index built with one profile cannot be queried
-            // with another. Reject a mismatch.
-            if stored != requested {
-                return Err(SearchError::ConfigMismatch {
-                    stored,
-                    requested: requested.to_string(),
-                });
-            }
-        }
-        Self::stamp_profile(&conn, requested)?;
-        Ok(Self::assemble(conn, config))
+        Self::open(&db_path, config.normalize.options(), config.strategy, false)
     }
 
     /// Opens the index under `config`, regenerating it in place when the stored
@@ -189,20 +214,30 @@ impl SearchEngine {
         db_path: String,
         config: EngineConfig,
     ) -> Result<Arc<Self>, SearchError> {
-        let conn = Self::open_schema(&db_path)?;
-        let requested = config.normalize.as_key();
-        let needs_rebuild = Self::stored_profile(&conn)?
-            .map(|stored| stored != requested)
-            .unwrap_or(false);
-        let engine = Self::assemble(conn, config);
-        if needs_rebuild {
-            // `reindex` re-normalizes from raw and stamps the new profile.
-            engine.reindex()?;
-        } else {
-            let conn = engine.conn.lock().unwrap();
-            Self::stamp_profile(&conn, requested)?;
-        }
-        Ok(engine)
+        Self::open(&db_path, config.normalize.options(), config.strategy, true)
+    }
+
+    /// Like `withConfig`, but selects normalization with a composable
+    /// `NormalizeOptions` set instead of a named preset. A fingerprint mismatch
+    /// with the stored index is a `ConfigMismatch`; use `withOptionsRebuilding`
+    /// to regenerate instead.
+    #[uniffi::constructor(name = "withOptions")]
+    pub fn with_options(
+        db_path: String,
+        config: EngineOptionsConfig,
+    ) -> Result<Arc<Self>, SearchError> {
+        Self::open(&db_path, config.normalize, config.strategy, false)
+    }
+
+    /// Like `withConfigRebuilding`, but selects normalization with a composable
+    /// `NormalizeOptions` set. A change in the enabled steps regenerates the
+    /// index in place from the retained raw text.
+    #[uniffi::constructor(name = "withOptionsRebuilding")]
+    pub fn with_options_rebuilding(
+        db_path: String,
+        config: EngineOptionsConfig,
+    ) -> Result<Arc<Self>, SearchError> {
+        Self::open(&db_path, config.normalize, config.strategy, true)
     }
 
     /// Adds, or replaces, the document stored under `id`.
@@ -253,7 +288,7 @@ impl SearchEngine {
                 params![id, &norm],
             )?;
         }
-        Self::stamp_profile(&tx, self.profile.as_key())?;
+        Self::stamp_profile(&tx, &self.options.fingerprint())?;
         tx.commit()?;
         Ok(rows.len() as u64)
     }

@@ -25,6 +25,95 @@ impl NormalizeProfile {
             NormalizeProfile::NfkcCaseFold => "nfkc_case_fold",
         }
     }
+
+    /// The composable step set this preset expands to. NFKC is always applied
+    /// as the foundation, so it is not represented as a toggle.
+    pub fn options(self) -> NormalizeOptions {
+        match self {
+            NormalizeProfile::Loose => NormalizeOptions {
+                lowercase: true,
+                kana_fold: true,
+                ..NormalizeOptions::default()
+            },
+            NormalizeProfile::NfkcCaseFold => NormalizeOptions {
+                lowercase: true,
+                ..NormalizeOptions::default()
+            },
+        }
+    }
+}
+
+/// A composable set of normalization steps, all opt-in on top of the always-on
+/// NFKC foundation. The engine applies the enabled steps in a fixed canonical
+/// order (see `normalize/mod.rs`), so any combination is deterministic and
+/// identical across platforms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, uniffi::Record)]
+pub struct NormalizeOptions {
+    /// Fold case via `char::to_lowercase`.
+    #[uniffi(default = false)]
+    pub lowercase: bool,
+    /// Map katakana to hiragana (カ → か); dakuten stays distinct.
+    #[uniffi(default = false)]
+    pub kana_fold: bool,
+    /// Strip Latin/Western combining diacritics (café → cafe).
+    #[uniffi(default = false)]
+    pub fold_diacritics: bool,
+    /// Fold the prolonged-sound mark after kana (サーバー → サーバ).
+    #[uniffi(default = false)]
+    pub fold_choonpu: bool,
+    /// Expand iteration marks (時々 → 時時, こゞ → こご).
+    #[uniffi(default = false)]
+    pub expand_iteration_marks: bool,
+    /// Unify the dash/hyphen family to ASCII `-`.
+    #[uniffi(default = false)]
+    pub normalize_hyphens: bool,
+    /// Remove digit-grouping commas (1,000 → 1000).
+    #[uniffi(default = false)]
+    pub strip_digit_grouping: bool,
+    /// Collapse whitespace runs to a single space and trim.
+    #[uniffi(default = false)]
+    pub collapse_whitespace: bool,
+}
+
+impl NormalizeOptions {
+    /// Stable fingerprint persisted in the `meta` table. The two built-in
+    /// presets keep their historical keys (`loose` / `nfkc_case_fold`) so
+    /// existing indexes never report a spurious mismatch; any other combination
+    /// derives a canonical `nfkc+...` key from the enabled steps in fixed order.
+    pub fn fingerprint(&self) -> String {
+        if *self == NormalizeProfile::Loose.options() {
+            return "loose".to_string();
+        }
+        if *self == NormalizeProfile::NfkcCaseFold.options() {
+            return "nfkc_case_fold".to_string();
+        }
+        let mut parts = vec!["nfkc"];
+        if self.lowercase {
+            parts.push("lower");
+        }
+        if self.kana_fold {
+            parts.push("kana");
+        }
+        if self.fold_diacritics {
+            parts.push("diacritics");
+        }
+        if self.fold_choonpu {
+            parts.push("choonpu");
+        }
+        if self.expand_iteration_marks {
+            parts.push("iter");
+        }
+        if self.normalize_hyphens {
+            parts.push("hyphen");
+        }
+        if self.strip_digit_grouping {
+            parts.push("digitgroup");
+        }
+        if self.collapse_whitespace {
+            parts.push("ws");
+        }
+        parts.join("+")
+    }
 }
 
 /// Which query algorithm `SearchEngine::search` uses.
@@ -65,4 +154,15 @@ impl Default for EngineConfig {
             strategy: SearchStrategy::TrigramBm25,
         }
     }
+}
+
+/// Like [`EngineConfig`], but selects normalization with a composable
+/// [`NormalizeOptions`] set instead of a named preset. Used by the
+/// `withOptions` / `withOptionsRebuilding` constructors.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct EngineOptionsConfig {
+    /// The composable normalization steps applied at index and query time.
+    pub normalize: NormalizeOptions,
+    /// Which query algorithm `SearchEngine.search` uses.
+    pub strategy: SearchStrategy,
 }

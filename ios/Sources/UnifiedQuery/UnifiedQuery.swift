@@ -463,6 +463,30 @@ fileprivate struct FfiConverterDouble: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterBool : FfiConverter {
+    typealias FfiType = Int8
+    typealias SwiftType = Bool
+
+    public static func lift(_ value: Int8) throws -> Bool {
+        return value != 0
+    }
+
+    public static func lower(_ value: Bool) -> Int8 {
+        return value ? 1 : 0
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Bool {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Bool, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -670,6 +694,35 @@ public static func withConfigRebuilding(dbPath: String, config: EngineConfig)thr
 })
 }
     
+    /**
+     * Like `withConfig`, but selects normalization with a composable
+     * `NormalizeOptions` set instead of a named preset. A fingerprint mismatch
+     * with the stored index is a `ConfigMismatch`; use `withOptionsRebuilding`
+     * to regenerate instead.
+     */
+public static func withOptions(dbPath: String, config: EngineOptionsConfig)throws  -> SearchEngine {
+    return try  FfiConverterTypeSearchEngine.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
+    uniffi_unfydqry_fn_constructor_searchengine_withoptions(
+        FfiConverterString.lower(dbPath),
+        FfiConverterTypeEngineOptionsConfig.lower(config),$0
+    )
+})
+}
+    
+    /**
+     * Like `withConfigRebuilding`, but selects normalization with a composable
+     * `NormalizeOptions` set. A change in the enabled steps regenerates the
+     * index in place from the retained raw text.
+     */
+public static func withOptionsRebuilding(dbPath: String, config: EngineOptionsConfig)throws  -> SearchEngine {
+    return try  FfiConverterTypeSearchEngine.lift(try rustCallWithError(FfiConverterTypeSearchError.lift) {
+    uniffi_unfydqry_fn_constructor_searchengine_withoptionsrebuilding(
+        FfiConverterString.lower(dbPath),
+        FfiConverterTypeEngineOptionsConfig.lower(config),$0
+    )
+})
+}
+    
 
     
     /**
@@ -869,6 +922,89 @@ public func FfiConverterTypeEngineConfig_lower(_ value: EngineConfig) -> RustBuf
 
 
 /**
+ * Like [`EngineConfig`], but selects normalization with a composable
+ * [`NormalizeOptions`] set instead of a named preset. Used by the
+ * `withOptions` / `withOptionsRebuilding` constructors.
+ */
+public struct EngineOptionsConfig {
+    /**
+     * The composable normalization steps applied at index and query time.
+     */
+    public var normalize: NormalizeOptions
+    /**
+     * Which query algorithm `SearchEngine.search` uses.
+     */
+    public var strategy: SearchStrategy
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The composable normalization steps applied at index and query time.
+         */normalize: NormalizeOptions, 
+        /**
+         * Which query algorithm `SearchEngine.search` uses.
+         */strategy: SearchStrategy) {
+        self.normalize = normalize
+        self.strategy = strategy
+    }
+}
+
+
+
+extension EngineOptionsConfig: Equatable, Hashable {
+    public static func ==(lhs: EngineOptionsConfig, rhs: EngineOptionsConfig) -> Bool {
+        if lhs.normalize != rhs.normalize {
+            return false
+        }
+        if lhs.strategy != rhs.strategy {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(normalize)
+        hasher.combine(strategy)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeEngineOptionsConfig: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EngineOptionsConfig {
+        return
+            try EngineOptionsConfig(
+                normalize: FfiConverterTypeNormalizeOptions.read(from: &buf), 
+                strategy: FfiConverterTypeSearchStrategy.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: EngineOptionsConfig, into buf: inout [UInt8]) {
+        FfiConverterTypeNormalizeOptions.write(value.normalize, into: &buf)
+        FfiConverterTypeSearchStrategy.write(value.strategy, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEngineOptionsConfig_lift(_ buf: RustBuffer) throws -> EngineOptionsConfig {
+    return try FfiConverterTypeEngineOptionsConfig.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEngineOptionsConfig_lower(_ value: EngineOptionsConfig) -> RustBuffer {
+    return FfiConverterTypeEngineOptionsConfig.lower(value)
+}
+
+
+/**
  * A single search result: the stable `id` the host indexed under, plus a
  * relevance `score`.
  *
@@ -956,6 +1092,174 @@ public func FfiConverterTypeHit_lift(_ buf: RustBuffer) throws -> Hit {
 #endif
 public func FfiConverterTypeHit_lower(_ value: Hit) -> RustBuffer {
     return FfiConverterTypeHit.lower(value)
+}
+
+
+/**
+ * A composable set of normalization steps, all opt-in on top of the always-on
+ * NFKC foundation. The engine applies the enabled steps in a fixed canonical
+ * order (see `normalize/mod.rs`), so any combination is deterministic and
+ * identical across platforms.
+ */
+public struct NormalizeOptions {
+    /**
+     * Fold case via `char::to_lowercase`.
+     */
+    public var lowercase: Bool
+    /**
+     * Map katakana to hiragana (カ → か); dakuten stays distinct.
+     */
+    public var kanaFold: Bool
+    /**
+     * Strip Latin/Western combining diacritics (café → cafe).
+     */
+    public var foldDiacritics: Bool
+    /**
+     * Fold the prolonged-sound mark after kana (サーバー → サーバ).
+     */
+    public var foldChoonpu: Bool
+    /**
+     * Expand iteration marks (時々 → 時時, こゞ → こご).
+     */
+    public var expandIterationMarks: Bool
+    /**
+     * Unify the dash/hyphen family to ASCII `-`.
+     */
+    public var normalizeHyphens: Bool
+    /**
+     * Remove digit-grouping commas (1,000 → 1000).
+     */
+    public var stripDigitGrouping: Bool
+    /**
+     * Collapse whitespace runs to a single space and trim.
+     */
+    public var collapseWhitespace: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Fold case via `char::to_lowercase`.
+         */lowercase: Bool = false, 
+        /**
+         * Map katakana to hiragana (カ → か); dakuten stays distinct.
+         */kanaFold: Bool = false, 
+        /**
+         * Strip Latin/Western combining diacritics (café → cafe).
+         */foldDiacritics: Bool = false, 
+        /**
+         * Fold the prolonged-sound mark after kana (サーバー → サーバ).
+         */foldChoonpu: Bool = false, 
+        /**
+         * Expand iteration marks (時々 → 時時, こゞ → こご).
+         */expandIterationMarks: Bool = false, 
+        /**
+         * Unify the dash/hyphen family to ASCII `-`.
+         */normalizeHyphens: Bool = false, 
+        /**
+         * Remove digit-grouping commas (1,000 → 1000).
+         */stripDigitGrouping: Bool = false, 
+        /**
+         * Collapse whitespace runs to a single space and trim.
+         */collapseWhitespace: Bool = false) {
+        self.lowercase = lowercase
+        self.kanaFold = kanaFold
+        self.foldDiacritics = foldDiacritics
+        self.foldChoonpu = foldChoonpu
+        self.expandIterationMarks = expandIterationMarks
+        self.normalizeHyphens = normalizeHyphens
+        self.stripDigitGrouping = stripDigitGrouping
+        self.collapseWhitespace = collapseWhitespace
+    }
+}
+
+
+
+extension NormalizeOptions: Equatable, Hashable {
+    public static func ==(lhs: NormalizeOptions, rhs: NormalizeOptions) -> Bool {
+        if lhs.lowercase != rhs.lowercase {
+            return false
+        }
+        if lhs.kanaFold != rhs.kanaFold {
+            return false
+        }
+        if lhs.foldDiacritics != rhs.foldDiacritics {
+            return false
+        }
+        if lhs.foldChoonpu != rhs.foldChoonpu {
+            return false
+        }
+        if lhs.expandIterationMarks != rhs.expandIterationMarks {
+            return false
+        }
+        if lhs.normalizeHyphens != rhs.normalizeHyphens {
+            return false
+        }
+        if lhs.stripDigitGrouping != rhs.stripDigitGrouping {
+            return false
+        }
+        if lhs.collapseWhitespace != rhs.collapseWhitespace {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(lowercase)
+        hasher.combine(kanaFold)
+        hasher.combine(foldDiacritics)
+        hasher.combine(foldChoonpu)
+        hasher.combine(expandIterationMarks)
+        hasher.combine(normalizeHyphens)
+        hasher.combine(stripDigitGrouping)
+        hasher.combine(collapseWhitespace)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNormalizeOptions: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NormalizeOptions {
+        return
+            try NormalizeOptions(
+                lowercase: FfiConverterBool.read(from: &buf), 
+                kanaFold: FfiConverterBool.read(from: &buf), 
+                foldDiacritics: FfiConverterBool.read(from: &buf), 
+                foldChoonpu: FfiConverterBool.read(from: &buf), 
+                expandIterationMarks: FfiConverterBool.read(from: &buf), 
+                normalizeHyphens: FfiConverterBool.read(from: &buf), 
+                stripDigitGrouping: FfiConverterBool.read(from: &buf), 
+                collapseWhitespace: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NormalizeOptions, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.lowercase, into: &buf)
+        FfiConverterBool.write(value.kanaFold, into: &buf)
+        FfiConverterBool.write(value.foldDiacritics, into: &buf)
+        FfiConverterBool.write(value.foldChoonpu, into: &buf)
+        FfiConverterBool.write(value.expandIterationMarks, into: &buf)
+        FfiConverterBool.write(value.normalizeHyphens, into: &buf)
+        FfiConverterBool.write(value.stripDigitGrouping, into: &buf)
+        FfiConverterBool.write(value.collapseWhitespace, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNormalizeOptions_lift(_ buf: RustBuffer) throws -> NormalizeOptions {
+    return try FfiConverterTypeNormalizeOptions.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNormalizeOptions_lower(_ value: NormalizeOptions) -> RustBuffer {
+    return FfiConverterTypeNormalizeOptions.lower(value)
 }
 
 // Note that we don't yet support `indirect` for enums.
@@ -1287,6 +1591,19 @@ public func normalizeLoose(input: String) -> String {
 })
 }
 /**
+ * Normalizes `input` with a composable `NormalizeOptions` set — the same
+ * transform the engine applies when opened via `withOptions`. Exposed so a
+ * host can preview how a string folds under a given combination of steps.
+ */
+public func normalizeWithOptions(input: String, options: NormalizeOptions) -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_unfydqry_fn_func_normalizewithoptions(
+        FfiConverterString.lower(input),
+        FfiConverterTypeNormalizeOptions.lower(options),$0
+    )
+})
+}
+/**
  * Like `normalizeLoose`, but lets the caller pick the normalization profile.
  */
 public func normalizeWithProfile(input: String, profile: NormalizeProfile) -> String {
@@ -1316,6 +1633,9 @@ private var initializationResult: InitializationResult = {
     if (uniffi_unfydqry_checksum_func_normalizeloose() != 36363) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_unfydqry_checksum_func_normalizewithoptions() != 33141) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_unfydqry_checksum_func_normalizewithprofile() != 49347) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1338,6 +1658,12 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_constructor_searchengine_withconfigrebuilding() != 47325) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_constructor_searchengine_withoptions() != 4538) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_constructor_searchengine_withoptionsrebuilding() != 9643) {
         return InitializationResult.apiChecksumMismatch
     }
 

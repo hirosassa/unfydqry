@@ -29,9 +29,9 @@ unfydqry/
 ├── core/                        Rust implementation (crate name: unfydqry)
 │   ├── Cargo.toml
 │   ├── src/lib.rs               FFI surface (constructors, normalize* exports)
-│   ├── src/config.rs           NormalizeProfile / SearchStrategy / EngineConfig
-│   ├── src/engine.rs           SearchEngine (index/search/remove/reindex, raw-text retention, profile fingerprint)
-│   ├── src/normalize/          swappable normalization profiles
+│   ├── src/config.rs           NormalizeProfile / NormalizeOptions / SearchStrategy / EngineConfig / EngineOptionsConfig
+│   ├── src/engine.rs           SearchEngine (index/search/remove/reindex, raw-text retention, normalize fingerprint)
+│   ├── src/normalize/          composable normalization steps (steps.rs) + presets
 │   ├── src/search/             swappable query algorithms (trigram_bm25/substring/prefix/suffix/all_terms/fuzzy_trigram/levenshtein/damerau_levenshtein)
 │   ├── src/bin/uniffi-bindgen.rs
 │   └── tests/conformance.rs     spec-driven integration tests (see Tests)
@@ -114,11 +114,13 @@ val hits = engine.search("python", 50u)
 
 ## Configuring behaviour
 
-`SearchEngine` has three constructors. The **combination is chosen on the binding side**; every implementation lives in the Rust core (`core/src/normalize/`, `core/src/search/`), so the choice can never make iOS and Android diverge.
+`SearchEngine` has five constructors. The **combination is chosen on the binding side**; every implementation lives in the Rust core (`core/src/normalize/`, `core/src/search/`), so the choice can never make iOS and Android diverge.
 
 - `SearchEngine(dbPath:)` — the default combination, `loose` + `trigram_bm25`. Unchanged from before, so existing callers keep working.
-- `SearchEngine.withConfig(dbPath:, config:)` — pick the normalization profile and the search algorithm explicitly. Reopening an index under a *different* profile is an error (see below).
-- `SearchEngine.withConfigRebuilding(dbPath:, config:)` — same as `withConfig`, but a profile change regenerates the index in place instead of erroring (see [Regenerating the index](#regenerating-the-index-after-a-normalization-change)).
+- `SearchEngine.withConfig(dbPath:, config:)` — pick a normalization **profile** and the search algorithm. Reopening an index under a *different* profile is an error (see below).
+- `SearchEngine.withConfigRebuilding(dbPath:, config:)` — same as `withConfig`, but a normalization change regenerates the index in place instead of erroring (see [Regenerating the index](#regenerating-the-index-after-a-normalization-change)).
+- `SearchEngine.withOptions(dbPath:, config:)` — like `withConfig`, but selects normalization with a composable `NormalizeOptions` set (see below) instead of a named preset.
+- `SearchEngine.withOptionsRebuilding(dbPath:, config:)` — `withOptions` + in-place regeneration on a normalization change.
 
 ### Normalization profiles (`NormalizeProfile`)
 
@@ -131,14 +133,31 @@ The profile is applied identically at index time and query time.
 
 Both profiles keep dakuten / handakuten distinct (`か` ≠ `が`).
 
-> The active profile is fingerprinted into the index's `meta` table. Reopening an existing index with a *different* profile throws `ConfigMismatch` rather than silently returning wrong results — regenerate the index to switch profiles (see below). (An index created before this field existed is treated as `loose`.)
+### Composable normalization steps (`NormalizeOptions`)
+
+For finer control, `withOptions` takes a `NormalizeOptions` set: NFKC is always applied as the foundation, and any of the following steps can be toggled on top. The two profiles above are just named presets — `loose` = `{lowercase, kana_fold}`, `nfkc_case_fold` = `{lowercase}`.
+
+| Step | Effect |
+|---|---|
+| `lowercase` | Case fold via `char::to_lowercase`. |
+| `kana_fold` | Katakana → hiragana (`カ` → `か`); dakuten stays distinct. |
+| `fold_diacritics` | Strip Latin/Western combining marks (`café` → `cafe`); Japanese voiced marks are preserved. |
+| `fold_choonpu` | Fold the prolonged-sound mark after kana (`サーバー` ≡ `サーバ`). |
+| `expand_iteration_marks` | Expand iteration marks (`時々` → `時時`, `こゞ` → `こご`). |
+| `normalize_hyphens` | Unify the dash/hyphen family (`‐ – — −` …) to ASCII `-`. |
+| `strip_digit_grouping` | Remove digit-grouping commas (`1,000` → `1000`). |
+| `collapse_whitespace` | Collapse whitespace runs to a single space and trim. |
+
+The enabled steps run in a fixed canonical order (`NFKC → expand_iteration_marks → kana_fold → fold_choonpu → lowercase → fold_diacritics → normalize_hyphens → strip_digit_grouping → collapse_whitespace`), so any combination is deterministic and identical on iOS and Android.
+
+> The active normalization is fingerprinted into the index's `meta` table. The two presets keep their historical keys (`loose` / `nfkc_case_fold`); any other combination derives a canonical `nfkc+…` key. Reopening an existing index under a *different* fingerprint throws `ConfigMismatch` rather than silently returning wrong results — regenerate the index to switch (see below). (An index created before this field existed is treated as `loose`.)
 
 ### Regenerating the index after a normalization change
 
 The engine stores each document's **raw text** alongside its normalized form, so the index can be regenerated in place when the profile (or its underlying rules) changes — the host does not re-feed documents.
 
 - **Explicit** — call `reindex()` on an open engine. It re-normalizes every stored document under the engine's current profile, rewrites the index, and re-stamps the profile fingerprint. Returns the number of documents regenerated.
-- **Automatic on open** — `SearchEngine.withConfigRebuilding(dbPath:, config:)` opens the index and, when the stored profile differs from the requested one, runs the same regeneration before returning instead of throwing `ConfigMismatch`.
+- **Automatic on open** — `SearchEngine.withConfigRebuilding` / `withOptionsRebuilding` open the index and, when the stored fingerprint differs from the requested one, run the same regeneration before returning instead of throwing `ConfigMismatch`.
 
 > Documents indexed before raw-text retention existed have no raw text to re-normalize and are left untouched by a regeneration.
 
@@ -180,7 +199,7 @@ val engine = SearchEngine.withConfig(
 )
 ```
 
-To inspect normalization directly there are also free functions: `normalizeLoose(input)` (always the `loose` profile) and `normalizeWithProfile(input, profile)`.
+To inspect normalization directly there are also free functions: `normalizeLoose(input)` (always the `loose` profile), `normalizeWithProfile(input, profile)`, and `normalizeWithOptions(input, options)` for a composable step set.
 
 ## Build
 
