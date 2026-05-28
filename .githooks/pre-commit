@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Lightweight commit guard: keep the Rust core rustfmt-clean.
+#
+# This only runs the fast `cargo fmt --check` (the same check as
+# .github/workflows/rust-tests.yml). Heavier gates — clippy, tests, and
+# UniFFI binding drift — are intentionally left to `make check` /
+# `make verify-bindings` and CI, so commits stay fast.
+#
+# Enable once per clone:
+#     git config core.hooksPath .githooks
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+
+if git diff --cached --name-only --diff-filter=ACM | grep -q '\.rs$'; then
+  echo "pre-commit: cargo fmt --check"
+  if ! cargo fmt --manifest-path "$repo_root/core/Cargo.toml" --all -- --check; then
+    echo >&2
+    echo "Rust formatting issues found. Run 'make fmt' (or 'cargo fmt'), re-stage, and commit again." >&2
+    exit 1
+  fi
+fi
