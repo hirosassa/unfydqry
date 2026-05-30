@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:unfydqry/unfydqry.dart';
@@ -41,7 +43,8 @@ class _SearchPageState extends State<SearchPage> {
   SearchEngine? _engine;
   final _queryCtrl = TextEditingController();
   String _status = 'initializing…';
-  List<({int id, String text})> _results = [];
+  List<Hit> _hits = const [];
+  late final Map<int, String> _byId = {for (final d in _seed) d.id: d.text};
 
   @override
   void initState() {
@@ -66,26 +69,26 @@ class _SearchPageState extends State<SearchPage> {
     final engine = _engine;
     if (engine == null) return;
     final hits = await engine.search(_queryCtrl.text);
-    // Re-fetch records from the "host store" (the seed list here).
-    final byId = {for (final d in _seed) d.id: d.text};
     setState(() {
-      _results = hits
-          .where((h) => byId.containsKey(h.id))
-          .map((h) => (id: h.id, text: byId[h.id]!))
-          .toList();
-      _status = 'hits: ${_results.length}';
+      _hits = hits;
+      _status = 'hits: ${hits.length}';
     });
   }
 
   @override
   void dispose() {
-    _engine?.dispose();
+    unawaited(_engine?.dispose() ?? Future.value());
     _queryCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Join engine hits back to the "host store" (the seed list here).
+    final results = _hits
+        .where((h) => _byId.containsKey(h.id))
+        .map((h) => (id: h.id, text: _byId[h.id]!))
+        .toList();
     return Scaffold(
       appBar: AppBar(title: const Text('SearchSample')),
       body: Padding(
@@ -108,9 +111,9 @@ class _SearchPageState extends State<SearchPage> {
             const SizedBox(height: 8),
             Expanded(
               child: ListView.builder(
-                itemCount: _results.length,
+                itemCount: results.length,
                 itemBuilder: (ctx, i) {
-                  final r = _results[i];
+                  final r = results[i];
                   return ListTile(
                     title: Text(r.text),
                     subtitle: Text('id=${r.id}'),
