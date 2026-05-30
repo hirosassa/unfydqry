@@ -11,9 +11,12 @@ package unfydqry.flutter
 //   names and parameters are the same; only the syntax differs.
 //
 // The Kotlin syntax cheat-sheet for this file:
-//   fun name(param: Type): ReturnType  →  func name(param: Type) -> ReturnType
-//   call.argument<String>("key")!!     →  args["key"] as! String
-//   result.success(value)              →  result(value)
+//   fun name(param: Type): ReturnType        →  func name(param: Type) -> ReturnType
+//   call.argument<String>("key") ?: bad(...) →  args["key"] as? String ?? bad(...)
+//   result.success(value)                    →  result(value)
+//
+// Threading: the method channel delivers calls on the platform main thread, so
+// `engines` and `nextHandle` need no synchronization.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -51,35 +54,42 @@ class UnfydqryPlugin : FlutterPlugin, MethodCallHandler {
         try {
             when (call.method) {
                 "open" -> {
-                    val dbPath = call.argument<String>("dbPath")!!
+                    val dbPath = call.argument<String>("dbPath")
+                        ?: return result.badArgs("dbPath:String required")
                     val handle = nextHandle++
                     engines[handle] = SearchEngine(dbPath)
                     result.success(handle)
                 }
 
                 "index" -> {
-                    engine(call).index(
-                        id = call.longArg("id"),
-                        text = call.argument<String>("text")!!,
-                    )
+                    val id = call.longArg("id") ?: return result.badArgs("id:Int required")
+                    val text = call.argument<String>("text")
+                        ?: return result.badArgs("text:String required")
+                    val engine = engine(call, result) ?: return
+                    engine.index(id = id, text = text)
                     result.success(null)
                 }
 
                 "remove" -> {
-                    engine(call).remove(id = call.longArg("id"))
+                    val id = call.longArg("id") ?: return result.badArgs("id:Int required")
+                    val engine = engine(call, result) ?: return
+                    engine.remove(id = id)
                     result.success(null)
                 }
 
                 "search" -> {
-                    val hits = engine(call).search(
-                        query = call.argument<String>("query")!!,
-                        limit = call.argument<Int>("limit")!!.toUInt(),
-                    )
+                    val query = call.argument<String>("query")
+                        ?: return result.badArgs("query:String required")
+                    val limit = call.argument<Int>("limit")
+                        ?: return result.badArgs("limit:Int required")
+                    val engine = engine(call, result) ?: return
+                    val hits = engine.search(query = query, limit = limit.toUInt())
                     result.success(hits.map { mapOf("id" to it.id, "score" to it.score) })
                 }
 
                 "dispose" -> {
-                    val handle = call.argument<Int>("handle")!!
+                    val handle = call.argument<Int>("handle")
+                        ?: return result.badArgs("handle:Int required")
                     engines.remove(handle)?.close()
                     result.success(null)
                 }
@@ -93,11 +103,17 @@ class UnfydqryPlugin : FlutterPlugin, MethodCallHandler {
         }
     }
 
-    private fun engine(call: MethodCall): SearchEngine =
-        engines[call.argument<Int>("handle")!!]
-            ?: error("no engine for handle ${call.argument<Int>("handle")}")
+    /** Resolves the engine for the call's `handle`, or sends a `NO_ENGINE` error and returns null. */
+    private fun engine(call: MethodCall, result: Result): SearchEngine? {
+        val handle = call.argument<Int>("handle")
+            ?: run { result.badArgs("handle:Int required"); return null }
+        return engines[handle]
+            ?: run { result.error("NO_ENGINE", "no engine for handle $handle", null); return null }
+    }
 
-    // Flutter's method channel can deliver Dart int as Int or Long depending on value.
-    private fun MethodCall.longArg(key: String): Long =
-        (argument<Any>(key) as Number).toLong()
+    private fun Result.badArgs(message: String) = error("BAD_ARGS", message, null)
+
+    // Flutter's method channel can deliver Dart int as Int or Long depending on value;
+    // returns null (rather than throwing) when the value is missing or not numeric.
+    private fun MethodCall.longArg(key: String): Long? = (argument<Any>(key) as? Number)?.toLong()
 }
