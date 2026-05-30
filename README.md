@@ -11,6 +11,7 @@ Design rationale lives in [`docs/cross-platform-search-engine-design.md`](docs/c
 [![Swift Tests](https://github.com/0x0c/unfydqry/actions/workflows/swift-tests.yml/badge.svg)](https://github.com/0x0c/unfydqry/actions/workflows/swift-tests.yml)
 [![Kotlin Tests](https://github.com/0x0c/unfydqry/actions/workflows/kotlin-tests.yml/badge.svg)](https://github.com/0x0c/unfydqry/actions/workflows/kotlin-tests.yml)
 [![Rust Tests](https://github.com/0x0c/unfydqry/actions/workflows/rust-tests.yml/badge.svg)](https://github.com/0x0c/unfydqry/actions/workflows/rust-tests.yml)
+[![Flutter Tests](https://github.com/0x0c/unfydqry/actions/workflows/flutter-tests.yml/badge.svg)](https://github.com/0x0c/unfydqry/actions/workflows/flutter-tests.yml)
 
 ## What it does
 
