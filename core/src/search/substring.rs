@@ -2,16 +2,17 @@
 
 use rusqlite::{Connection, params};
 
-use super::SearchAlgorithm;
+use super::{SearchAlgorithm, escape_like};
 use crate::engine::{Hit, SearchError};
 
 pub struct Substring;
 
 impl SearchAlgorithm for Substring {
     fn search(&self, conn: &Connection, q: &str, limit: u32) -> Result<Vec<Hit>, SearchError> {
-        let mut stmt =
-            conn.prepare("SELECT id FROM entries WHERE norm LIKE '%'||?1||'%' LIMIT ?2")?;
-        let rows = stmt.query_map(params![q, limit], |r| {
+        let escaped = escape_like(q);
+        let mut stmt = conn
+            .prepare("SELECT id FROM entries WHERE norm LIKE '%'||?1||'%' ESCAPE '\\' LIMIT ?2")?;
+        let rows = stmt.query_map(params![escaped, limit], |r| {
             Ok(Hit {
                 id: r.get(0)?,
                 score: 0.0,
