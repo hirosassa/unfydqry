@@ -58,6 +58,8 @@ unfydqry/
 │   └── example/                 Flutter サンプルアプリ(同じ8件 seed)
 └── docs/
     ├── README.ja.md
+    ├── ios.md                    iOS(Swift)ガイド — 導入 / 使い方 / ビルド / テスト / リリース
+    ├── android.md                Android(Kotlin)ガイド — 導入 / 使い方 / ビルド / テスト / リリース
     ├── flutter-plugin.md
     └── cross-platform-search-engine-design.md
 ```
@@ -69,32 +71,17 @@ unfydqry/
 | FFI モジュール | `unfydqryFFI`(XCFramework 内 modulemap) | `libunfydqry.so`(JNA 経由) |
 | 配布物 | `ios/UnifiedQuery.xcframework`(arm64 device + arm64/x86_64 sim + arm64 mac) | `android/jniLibs/{arm64-v8a,armeabi-v7a,x86_64}/libunfydqry.so` |
 
-## クイック使用例
+## プラットフォーム別ガイド
 
-### iOS(Swift)
-```swift
-import UnifiedQuery
+導入・クイック使用例・ネイティブ成果物のビルド・テスト構成・リリース手順は、各プラットフォームの専用ガイドにまとめてある。以下のクロスプラットフォームな節(挙動のカスタマイズ、`spec/` のテスト契約)はどのバインディングにも共通する。
 
-let dbURL = FileManager.default
-    .urls(for: .documentDirectory, in: .userDomainMask)[0]
-    .appendingPathComponent("search_index.sqlite")
-let engine = try SearchEngine(dbPath: dbURL.path)
+| プラットフォーム | ガイド | ライブラリ |
+|---|---|---|
+| iOS(Swift) | [`ios.md`](ios.md) | `import UnifiedQuery`(SwiftPM) |
+| Android(Kotlin) | [`android.md`](android.md) | `io.github.0x0c:unifiedquery`(Gradle / Maven Central) |
+| Flutter(Dart) | [`flutter-plugin.md`](flutter-plugin.md) | `unfydqry`(Dart パッケージ、Git 依存) |
 
-try engine.index(id: 1, text: "Ｐｙｔｈｏｮ 入門")
-let hits = try engine.search(query: "python", limit: 50)
-// → [Hit(id: 1, score: -1.521)]
-```
-
-### Android(Kotlin)
-```kotlin
-import uniffi.unfydqry.SearchEngine
-
-val engine = SearchEngine(filesDir.resolve("search_index.sqlite").absolutePath)
-
-engine.index(1L, "Ｐｙｔｈｏｮ 入門")
-val hits = engine.search("python", 50u)
-// → [Hit(id=1, score=-1.521)]
-```
+> ガイド本体は英語です。
 
 ## 挙動のカスタマイズ
 
@@ -167,21 +154,7 @@ val hits = engine.search("python", 50u)
 
 ### 組み合わせの選択
 
-iOS(Swift):
-```swift
-let engine = try SearchEngine.withConfig(
-    dbPath: dbURL.path,
-    config: EngineConfig(normalize: .nfkcCaseFold, strategy: .prefix)
-)
-```
-
-Android(Kotlin):
-```kotlin
-val engine = SearchEngine.withConfig(
-    dbPath,
-    EngineConfig(NormalizeProfile.NFKC_CASE_FOLD, SearchStrategy.PREFIX),
-)
-```
+組み合わせはバインディング側で選ぶ — 言語ごとの呼び出し例は [iOS](ios.md#selecting-a-combination)・[Android](android.md#selecting-a-combination)・[Flutter](flutter-plugin.md) の各ガイドを参照。
 
 正規化を直接確認するための関数もある: `normalizeLoose(input)`(常に `loose` プロファイル)、`normalizeWithProfile(input, profile)`、合成ステップ用の `normalizeWithOptions(input, options)`。
 
@@ -200,39 +173,13 @@ cargo test --all-targets         # unit + conformance
 cargo build --release
 ```
 
-### iOS(SwiftPM + Xcode サンプル)
-```sh
-# 4 つの Apple ターゲットをビルドし、Swift バインディングを再生成し、
-# fat XCFramework を組み立て、SwiftPM 用に zip 化、checksum を表示する。
-# ios/UnifiedQuery.xcframework{,.zip,.zip.sha256} が生成される。
-bash scripts/build-xcframework.sh
+### プラットフォーム別ビルド
 
-# テスト(Package.swift がローカルの xcframework を参照する)
-swift test
+ネイティブ成果物(XCFramework / `.so`)とサンプルアプリのビルドは各プラットフォームのガイドに記載:
 
-# サンプルアプリ
-cd ios/sample
-xcodegen generate                # project.yml → SearchSample.xcodeproj
-open SearchSample.xcodeproj
-```
-
-### Android(Gradle サンプル)
-```sh
-# Rust から .so を生成して jniLibs/ に配置
-cd core
-ANDROID_NDK_HOME=/path/to/ndk cargo ndk \
-  -t arm64-v8a -t armeabi-v7a -t x86_64 \
-  -o ../android/jniLibs build --release
-
-# JVM 単体テスト(macOS arm64 の dylib を JNA で直接読む)
-cargo build --release --target aarch64-apple-darwin
-cd ../android/sample
-gradle :unifiedquery:test
-
-# サンプルアプリ
-gradle :app:assembleDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
+- iOS(XCFramework + Xcode サンプル) — [`ios.md`](ios.md#build-swiftpm--xcode-sample)
+- Android(cargo-ndk で `.so` + Gradle サンプル) — [`android.md`](android.md#build-gradle-sample)
+- Flutter — [`flutter-plugin.md`](flutter-plugin.md#building-native-artifacts)
 
 ### サンプルアプリ
 
@@ -299,25 +246,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ### 各プラットフォームのテストファイル
 
-iOS(`ios/Tests/UnifiedQueryTests/`):
-
-| ファイル | 層 | 備考 |
-|---|---|---|
-| `SpecLoader.swift` | インフラ | `spec/*.json` を Swift の struct にデコード。`#filePath` から `spec/` を辿るため SwiftPM の resources 機構は不要。 |
-| `SpecDrivenTests.swift` | 2 — spec 駆動 | `@Test(arguments:)` で spec ケースを 1 件 1 パラメタライズドテストに展開。 |
-| `NormalizeTests.swift` | 4 — native (normalize) | 不等式(`が ≠ か`)、idempotency、長文スモーク。 |
-| `SearchEngineLifecycleTests.swift` | 3 — ライフサイクル | `:memory:`、ファイル生成、再オープン後の永続性、不正パス、複数 DB の独立性。 |
-| `SearchEngineQueryTests.swift` | 4 — native (query) | bm25 順序、`limit`、score sanity、FTS5 予約文字、`withTaskGroup` での並行スモーク。 |
-
-Android(`android/sample/unifiedquery/src/test/kotlin/com/unfydqry/unifiedquery/`):
-
-| ファイル | 層 | 備考 |
-|---|---|---|
-| `Spec.kt` | インフラ | Jackson で `spec/*.json` をデコード。`unfydqry.spec.dir` は `build.gradle.kts` から渡る。 |
-| `SpecDrivenTest.kt` | 2 — spec 駆動 | `@ParameterizedTest` + `@MethodSource` で Swift と同じ展開をする。 |
-| `NormalizeTest.kt` | 4 — native (normalize) | Swift と同じ不等式 / idempotency / 長文ケース。 |
-| `SearchEngineLifecycleTest.kt` | 3 — ライフサイクル | `java.nio.file` と `SearchException` 版。形は Swift とほぼ対応。 |
-| `SearchEngineQueryTest.kt` | 4 — native (query) | bm25 順序、`limit`、score sanity、FTS5 予約文字、`ExecutorService` 並行。 |
+各バインディングの native(lifecycle + query)テストファイルは、それぞれのガイドに記載 — iOS は [`ios.md`](ios.md#tests)、Android は [`android.md`](android.md#tests)。どちらも下記 Rust コアと同じ 4 層構成に従う。
 
 Rust(`core/`):
 
@@ -385,24 +314,10 @@ AAR ワークフローは `cargo-ndk` で全3 ABI 分の `libunfydqry.so` を再
 し、コミット済みの Kotlin バインディングが Rust コアと同期しているか検証
 してから、vanniktech-maven-publish で署名付き AAR を公開する。
 
-### iOS xcframework
+手順の詳細は各プラットフォームのガイドに記載:
 
-xcframework は Git にコミットせず、GitHub Releases で配布している。新規
-リリース手順:
-
-1. 目的の変更を `main` にすべて取り込む。
-2. Actions → **Release XCFramework** → *Run workflow* を実行。タグ名
-   (例: `v0.1.0`)を渡す。
-3. ワークフローが `scripts/build-xcframework.sh` を実行し、`main` から
-   分岐した detached HEAD 上で `Package.swift` の
-   `// --- BINARY-TARGET START/END ---` ブロックを URL + checksum 形式
-   に書き換え、その commit にタグを打ち、(ブランチではなく)タグだけを
-   push し、`UnifiedQuery.xcframework.zip` を添付した Release を公開
-   する。
-
-タグの commit にある `Package.swift` と添付 zip は同じ run で作られる
-ので、SwiftPM クライアントが checksum 不一致のタグを見ることは無い。
-`main` 自体はリリースワークフローでは変更されない。
+- iOS XCFramework — [`ios.md`](ios.md#releasing-xcframework)
+- Android AAR — [`android.md`](android.md#releasing-aar)
 
 ## 応用プラットフォーム対応
 
