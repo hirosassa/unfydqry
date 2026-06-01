@@ -466,4 +466,105 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
     }
+
+    fn engine_with(strategy: SearchStrategy) -> Arc<SearchEngine> {
+        SearchEngine::with_config(
+            ":memory:".to_string(),
+            EngineConfig {
+                normalize: NormalizeProfile::Loose,
+                strategy,
+            },
+        )
+        .expect("open")
+    }
+
+    #[test]
+    fn like_wildcard_percent_is_not_treated_as_wildcard() {
+        for strategy in [
+            SearchStrategy::Substring,
+            SearchStrategy::AllTerms,
+            SearchStrategy::TrigramBm25,
+        ] {
+            let e = engine_with(strategy);
+            e.index(1, "100% complete".into()).unwrap();
+            e.index(2, "completely done".into()).unwrap();
+
+            let hits = e.search("%".into(), 10).unwrap();
+            assert_eq!(
+                hits.len(),
+                1,
+                "strategy {strategy:?}: '%' query should only match literal '%'"
+            );
+            assert_eq!(hits[0].id, 1);
+        }
+
+        // Prefix: "%" must only match docs starting with a literal "%".
+        let e = engine_with(SearchStrategy::Prefix);
+        e.index(1, "%special".into()).unwrap();
+        e.index(2, "normal".into()).unwrap();
+        let hits = e.search("%".into(), 10).unwrap();
+        assert_eq!(
+            hits.len(),
+            1,
+            "prefix: '%' should only match literal '%' prefix"
+        );
+        assert_eq!(hits[0].id, 1);
+
+        // Suffix: "%" must only match docs ending with a literal "%".
+        let e = engine_with(SearchStrategy::Suffix);
+        e.index(1, "100%".into()).unwrap();
+        e.index(2, "done".into()).unwrap();
+        let hits = e.search("%".into(), 10).unwrap();
+        assert_eq!(
+            hits.len(),
+            1,
+            "suffix: '%' should only match literal '%' suffix"
+        );
+        assert_eq!(hits[0].id, 1);
+    }
+
+    #[test]
+    fn like_wildcard_underscore_is_not_treated_as_wildcard() {
+        for strategy in [
+            SearchStrategy::Substring,
+            SearchStrategy::AllTerms,
+            SearchStrategy::TrigramBm25,
+        ] {
+            let e = engine_with(strategy);
+            e.index(1, "my_var".into()).unwrap();
+            e.index(2, "myxvar".into()).unwrap();
+
+            let hits = e.search("_".into(), 10).unwrap();
+            assert_eq!(
+                hits.len(),
+                1,
+                "strategy {strategy:?}: '_' query should only match literal '_'"
+            );
+            assert_eq!(hits[0].id, 1);
+        }
+
+        // Prefix: "_" must only match docs starting with a literal "_".
+        let e = engine_with(SearchStrategy::Prefix);
+        e.index(1, "_private".into()).unwrap();
+        e.index(2, "xprivate".into()).unwrap();
+        let hits = e.search("_".into(), 10).unwrap();
+        assert_eq!(
+            hits.len(),
+            1,
+            "prefix: '_' should only match literal '_' prefix"
+        );
+        assert_eq!(hits[0].id, 1);
+
+        // Suffix: "_" must only match docs ending with a literal "_".
+        let e = engine_with(SearchStrategy::Suffix);
+        e.index(1, "trailing_".into()).unwrap();
+        e.index(2, "trailingx".into()).unwrap();
+        let hits = e.search("_".into(), 10).unwrap();
+        assert_eq!(
+            hits.len(),
+            1,
+            "suffix: '_' should only match literal '_' suffix"
+        );
+        assert_eq!(hits[0].id, 1);
+    }
 }

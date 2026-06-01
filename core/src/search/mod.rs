@@ -25,6 +25,22 @@ pub trait SearchAlgorithm: Send + Sync {
     fn search(&self, conn: &Connection, query: &str, limit: u32) -> Result<Vec<Hit>, SearchError>;
 }
 
+/// Escapes LIKE special characters (`%`, `_`, `\`) so they match literally.
+/// The caller must add `ESCAPE '\'` to the SQL LIKE clause.
+pub fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' | '%' | '_' => {
+                out.push('\\');
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Builds the concrete algorithm for a strategy.
 pub fn build_strategy(strategy: SearchStrategy) -> Box<dyn SearchAlgorithm> {
     match strategy {

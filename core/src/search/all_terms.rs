@@ -4,29 +4,29 @@
 
 use rusqlite::{Connection, ToSql, params_from_iter};
 
-use super::SearchAlgorithm;
+use super::{SearchAlgorithm, escape_like};
 use crate::engine::{Hit, SearchError};
 
 pub struct AllTerms;
 
 impl SearchAlgorithm for AllTerms {
     fn search(&self, conn: &Connection, q: &str, limit: u32) -> Result<Vec<Hit>, SearchError> {
-        let terms: Vec<&str> = q.split_whitespace().collect();
-        if terms.is_empty() {
+        let escaped_terms: Vec<String> = q.split_whitespace().map(escape_like).collect();
+        if escaped_terms.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Build `norm LIKE '%'||?1||'%' AND norm LIKE '%'||?2||'%' ...`.
-        let clause = (1..=terms.len())
-            .map(|i| format!("norm LIKE '%'||?{i}||'%'"))
+        // Build `norm LIKE '%'||?1||'%' ESCAPE '\' AND ...`.
+        let clause = (1..=escaped_terms.len())
+            .map(|i| format!("norm LIKE '%'||?{i}||'%' ESCAPE '\\'"))
             .collect::<Vec<_>>()
             .join(" AND ");
         let sql = format!(
             "SELECT id FROM entries WHERE {clause} LIMIT ?{}",
-            terms.len() + 1
+            escaped_terms.len() + 1
         );
 
-        let mut binds: Vec<&dyn ToSql> = terms.iter().map(|t| t as &dyn ToSql).collect();
+        let mut binds: Vec<&dyn ToSql> = escaped_terms.iter().map(|t| t as &dyn ToSql).collect();
         binds.push(&limit);
 
         let mut stmt = conn.prepare(&sql)?;
