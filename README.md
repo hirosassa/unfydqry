@@ -93,6 +93,62 @@ co-exist:
   URL form. `main` itself is never modified by the release workflow, so
   SwiftPM's manifest cache on dev machines stays consistent.
 
+### Android (Gradle / Maven Central)
+The `:unifiedquery` AAR — the Kotlin binding bundled with `libunfydqry.so` for
+all three ABIs — is published to Maven Central by `release-aar.yml`. Add the
+dependency with the coordinates from `android/sample/gradle.properties`
+(`io.github.0x0c:unifiedquery`):
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories {
+        mavenCentral()
+    }
+}
+
+// app/build.gradle.kts
+dependencies {
+    implementation("io.github.0x0c:unifiedquery:0.1.0")
+}
+```
+
+When building from a checkout instead of a release (e.g. the sample app), the
+module is consumed by project path — no Maven coordinates needed:
+
+```kotlin
+// settings.gradle.kts
+include(":unifiedquery")
+
+// app/build.gradle.kts
+dependencies {
+    implementation(project(":unifiedquery"))
+}
+```
+
+### Flutter
+The plugin is **not** published to pub.dev — it lives in-tree under `flutter/`
+and is consumed as a Git dependency. It also requires the native artifacts
+(XCFramework + `.so`) to be built first, so it is intended for teams already
+using Flutter (see [`docs/flutter-plugin.md`](docs/flutter-plugin.md)):
+
+```yaml
+# pubspec.yaml
+dependencies:
+  unfydqry:
+    git:
+      url: https://github.com/0x0c/unfydqry.git
+      path: flutter
+```
+
+```sh
+flutter pub get
+```
+
+> The plugin pulls the prebuilt native binaries from the repo's `ios/` and
+> `android/jniLibs/` trees, so build them once before `flutter run` — see
+> [Building native artifacts](docs/flutter-plugin.md#building-native-artifacts).
+
 ## Quick usage
 
 ### iOS (Swift)
