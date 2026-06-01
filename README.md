@@ -22,6 +22,48 @@ Design rationale lives in [`docs/cross-platform-search-engine-design.md`](docs/c
 - Searches return only the stable `id` and a score; the host re-fetches records from its source-of-truth store.
 - Because the logic lives in **one Rust implementation**, iOS and Android behaviour matches by construction, not by convention.
 
+## Architecture
+
+The core idea — and the main reason this library exists — is that **all search
+logic lives in a single Rust core**, consumed through auto-generated UniFFI
+bindings. Swift and Kotlin cannot drift into different implementations, so
+cross-platform consistency is a *structural* property rather than something
+maintained by discipline.
+
+```
+┌─────────────────────────────┐     ┌─────────────────────────────┐
+│  iOS app                     │     │  Android app                │
+│  ┌────────────────────────┐ │     │  ┌────────────────────────┐ │
+│  │ Primary store (truth)  │ │     │  │ Primary store (truth)  │ │
+│  └───────────┬────────────┘ │     │  └───────────┬────────────┘ │
+│              │ index/remove  │     │              │ index/remove │
+│  ┌───────────▼────────────┐ │     │  ┌───────────▼────────────┐ │
+│  │ SearchEngine (Swift)   │ │     │  │ SearchEngine (Kotlin)  │ │
+│  └───────────┬────────────┘ │     │  └───────────┬────────────┘ │
+└──────────────┼──────────────┘     └──────────────┼──────────────┘
+               │                                    │
+        ┌──────▼────────────────────────────────────▼──────┐
+        │      Rust core (UniFFI)  — one physical impl      │
+        │  normalization / index mgmt / ranking / matching  │
+        └───────────────────────────────────────────────────┘
+        Search index (a separate file from the primary store)
+```
+
+Two structural choices follow from this:
+
+- **Index-owning, store-agnostic.** The engine owns its own search index, kept
+  separate from your source-of-truth store. SwiftData / Room are only examples —
+  the primary data can live anywhere; the engine only requires that each record
+  is re-fetchable by a stable `id`. Search results return that `id` plus a score,
+  and the host re-fetches the full record.
+- **Bundled, dictionary-free runtime.** Normalization and the search substrate
+  (SQLite/FTS5) are compiled into the core rather than taken from the OS, so
+  results do not vary with OS or device versions. A shared [`spec/`](spec/README.md)
+  is verified by every platform's CI, so any core drift fails the *same case*
+  everywhere at once.
+
+Full rationale: [`docs/cross-platform-search-engine-design.md`](docs/cross-platform-search-engine-design.md).
+
 ## Layout
 
 ```
