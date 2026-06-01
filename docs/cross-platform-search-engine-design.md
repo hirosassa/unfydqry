@@ -1,354 +1,408 @@
-# クロスプラットフォーム検索エンジン 設計方針
+# Cross-platform search engine — design rationale
 
-iOS(SwiftData)と Android(Room)の両方から使える、共通の全文検索エンジンを
-**Rust + UniFFI** で実装するための設計方針まとめ。
+> 🌐 日本語版: [`ja/cross-platform-search-engine-design.md`](ja/cross-platform-search-engine-design.md)
 
-検索の曖昧軸は **大文字小文字・全角半角・かな種別(カタカナ/ひらがな)** を畳み込み、
-**濁点・半濁点は区別する**(`か` と `が` は別物)。
+This document records the design decisions, and their justifications, behind a
+shared full-text search engine usable from both iOS and Android, implemented in
+**Rust + UniFFI**. It concerns the design rationale rather than the concrete
+implementation. For the API and build steps, see the per-platform guides
+([`ios.md`](ios.md) / [`android.md`](android.md) /
+[`flutter-plugin.md`](flutter-plugin.md)).
+
+The design separates search behaviour into two independent concerns:
+
+1. the criterion by which two strings are considered identical — normalization;
+2. the method by which a query is matched against the text — the search strategy.
+
+Both are selected by the host-side binding, while the implementation resides
+entirely in a single Rust core. The combination of options can be changed to
+suit requirements, yet the selected behaviour cannot structurally diverge
+between iOS and Android.
 
 ---
 
-## 1. 全体アーキテクチャ
+## 1. Overall architecture
 
-### 1.1 基本構成 — インデックス所有型
+### 1.1 Index-owning model
 
-検索エンジンは **自前の SQLite + FTS5 インデックスファイルを所有**する。
-アプリ本体のデータ(SwiftData / Room)はあくまで「正(source of truth)」で、
-エンジンは「検索インデックス」として独立して存在する。
+The search engine owns its own search index. The application's primary data is
+the source of truth, and the engine exists as a search index independent of it.
+
+The location of the primary data is outside the engine's concern. SwiftData
+(iOS) and Room (Android), cited throughout this document, are representative
+examples only; the actual store may be a relational database, a document store,
+files, a remote server, or anything else. The only requirement the engine
+places on the primary data is that each record can be re-fetched by a stable
+ID. It does not depend on the storage form or location.
 
 ```
-┌─────────────────────────────┐     ┌──────────────────────────────┐
-│  iOS アプリ                  │     │  Android アプリ               │
-│  ┌────────────────────────┐ │     │ ┌──────────────────────────┐ │
-│  │ SwiftData (本体DB=正)   │ │     │ │ Room (本体DB=正)          │ │
-│  └───────────┬────────────┘ │     │ └────────────┬─────────────┘ │
-│              │ index/remove  │     │              │ index/remove  │
-│  ┌───────────▼────────────┐ │     │ ┌────────────▼─────────────┐ │
-│  │ SearchEngine (Swift binding) │ │ │ SearchEngine (Kotlin binding)│
-│  └───────────┬────────────┘ │     │ └────────────┬─────────────┘ │
-└──────────────┼──────────────┘     └──────────────┼───────────────┘
+┌─────────────────────────────┐     ┌─────────────────────────────┐
+│  iOS app                     │     │  Android app                │
+│  ┌────────────────────────┐ │     │  ┌────────────────────────┐ │
+│  │ Primary store (truth)  │ │     │  │ Primary store (truth)  │ │
+│  └───────────┬────────────┘ │     │  └───────────┬────────────┘ │
+│              │ index/remove  │     │              │ index/remove │
+│  ┌───────────▼────────────┐ │     │  ┌───────────▼────────────┐ │
+│  │ SearchEngine (Swift)   │ │     │  │ SearchEngine (Kotlin)  │ │
+│  └───────────┬────────────┘ │     │  └───────────┬────────────┘ │
+└──────────────┼──────────────┘     └──────────────┼──────────────┘
                │                                    │
         ┌──────▼────────────────────────────────────▼──────┐
-        │      Rust コア (UniFFI)  ※実装は物理的に1つ        │
-        │   正規化 / FTS5管理 / ランキング / トークナイズ     │
-        │   └─ rusqlite(bundled SQLite + FTS5 trigram)      │
+        │      Rust core (UniFFI)  — one physical impl      │
+        │  normalization / index mgmt / ranking / matching  │
         └───────────────────────────────────────────────────┘
-        search_index.sqlite (本体DBとは別ファイル)
+        Search index (a separate file from the primary store)
 ```
 
-### 1.2 設計上の重要決定
+There are two reasons for not co-locating the search index with the primary
+store. First, adding search-specific columns or tables to the primary store may
+interfere with the schema validation or cloud synchronization that store
+performs (SwiftData and Room being typical cases), potentially compromising the
+integrity of the source-of-truth data. Second, the search index is derived data
+that can be reconstructed from the source of truth, and its availability and
+integrity requirements differ from those of the primary store. The two are
+therefore kept as separate files.
 
-| 決定事項 | 内容 | 理由 |
+### 1.2 Key design decisions
+
+| Decision | Description | Rationale |
 |---|---|---|
-| 実装の単一化 | 検索ロジックを Rust に1実装だけ置き、Swift/Kotlin へ UniFFI で自動バインディング | アルゴリズム一致を「努力目標」ではなく**構造的に保証**する |
-| インデックス独立 | `search_index.sqlite` を本体DBと別ファイルにする | SwiftData/Room の整合性チェック(スキーマ検証・CloudKit連携)を壊さない |
-| ID のみ返却 | 検索結果は安定キー(IDのみ)を返し、本体は各OSで再フェッチ | エンジンが本体DB実装に結合しない・移植性を保つ |
-| 曖昧さは正規化で実現 | 近似マッチ(編集距離)ではなく、正規化で軸を畳み込む | 単純な部分一致がそのまま曖昧検索になり、高速かつ決定的 |
-| SQLite を同梱 | rusqlite の `bundled` で FTS5/trigram 付き SQLite をコンパイル | OS同梱 SQLite のバージョン差を踏まない(trigram は 3.34+) |
+| Single implementation | Place the search logic in exactly one Rust implementation and auto-generate bindings for each language | Guarantee algorithmic consistency **structurally** rather than by operational discipline |
+| Independent index | Keep the search index separate from the primary store | Avoid interfering with the primary store's integrity checks and cloud integration; treat search as reconstructible derived data |
+| Return IDs only | Search results return only a stable key (ID) and a score; the host re-fetches records per OS | The engine does not couple to the primary store's implementation, preserving portability |
+| Behaviour selected by the binding | The **combination** of normalization and search strategy is specified host-side | Select behaviour per use case while keeping the implementation centralized in the core |
+| Folding via normalization by default | Fuzziness is, in principle, realized by folding axes through normalization; approximate matching is offered as a selectable strategy | Plain matching functions as fuzzy search, fast and deterministically; other kinds of fuzziness, such as typo tolerance, are selected explicitly as strategies |
+| Bundled runtime | The implementations of normalization and the search substrate are included in the core rather than relying on the OS | Eliminate result differences caused by device or OS version differences (see the structural-consistency guarantee below) |
 
-### 1.3 データフロー
+### 1.3 Data flow
 
-- **書き込み**: 本体DBへ保存 → 生テキストを `index(id, text)` でエンジンに渡す(正規化はエンジン内部で実行)
-- **検索**: `search(query, limit)` に生入力を渡す → エンジンが同じ正規化を通して FTS5 を引く → `(id, score)` を返す → 本体DBからIDで再フェッチ
-- **削除**: 本体から削除 → `remove(id)`
+- **Write**: after storing in the primary store, pass the pre-normalization raw text to the engine via `index(id, text)` (normalization is performed inside the engine).
+- **Search**: pass raw input to `search(query, limit)`. The engine applies the same normalization, consults the index, and returns `(id, score)`. Records are re-fetched from the primary store by ID.
+- **Delete**: after deleting from the primary store, call `remove(id)`.
+
+The host always passes only pre-normalization strings. Not exposing the
+normalization process to the host side is the precondition for the
+cross-platform consistency described later.
 
 ---
 
-## 2. 正規化の方針(検索エンジンの心臓部)
+## 2. Design rationale for normalization
 
-### 2.1 畳み込む軸と担当ステップ
+Normalization maps strings of differing representation onto a common key, and
+governs most of the fuzziness in search. The engine's normalization approach has
+been changed from a single fixed process to a composable model in which the axes
+to fold can be selected.
 
-| 曖昧にする軸 | 担当 | 仕組み |
-|---|---|---|
-| 全角 / 半角 | NFKC(互換合成) | Ａ→A、ｶ→カ を正準形へ畳む。**濁点は合成形のまま保持** |
-| 大文字 / 小文字 | `char::to_lowercase` | Latin を小文字化 |
-| かな種別(カナ/かな) | カタカナ→ひらがな写像 | カ↔か を統一 |
-| 濁点 / 半濁点 | **畳み込まない(区別する)** | `か` と `が` は別キー |
+### 2.1 Treating normalization as a composition of independent axes
 
-> **NFKC を選ぶ理由**: 濁点を区別するため、結合文字へ分解する NFKD は使わない。
-> NFKD だと `が` が `か`+U+3099 に分かれてキーが不安定になる。NFKC なら
-> 全半角を畳みつつ濁点は単一の合成文字として安定する。
+Fuzziness has multiple independent axes: letter case, full-width / half-width,
+kana type, prolonged sound marks, iteration marks, the dash family, digit
+grouping, whitespace variation, and so on. The earlier design bundled these into
+a single fixed process; the current design treats each axis as an independent
+folding step.
 
-### 2.2 正規化コア(確定版)
+The basis for separating the axes is that the required range of fuzziness
+differs by use case. For some uses, unifying full-width / half-width is
+sufficient; others should also absorb kana type or prolonged sound marks.
+Treating each axis independently allows the strength of fuzziness to be selected
+according to requirements, whereas bundling into a single process permits only
+an on/off choice.
 
-```rust
-use unicode_normalization::UnicodeNormalization;
+### 2.2 A two-layer structure of base process and optional axes
 
-fn katakana_to_hiragana(c: char) -> char {
-    match c as u32 {
-        // 濁点付き(ガ=U+30AC, ヴ=U+30F4 等)も -0x60 で正しく写る
-        0x30A1..=0x30F6 => char::from_u32(c as u32 - 0x60).unwrap_or(c),
-        _ => c,
-    }
-}
+Normalization consists of two layers: a base process that is always applied, and
+axes that are added optionally.
 
-/// 大小・全半角・かな種別を畳み込む。濁点/半濁点は保持する。
-pub fn normalize_loose(input: &str) -> String {
-    input
-        .nfkc()                          // ① 全半角統一(濁点は合成形のまま)
-        .map(katakana_to_hiragana)       // ② カタカナ→ひらがな
-        .flat_map(char::to_lowercase)    // ③ 大文字→小文字
-        .collect()
-}
+- **Base process (always applied)**: a foundational Unicode normalization that
+  unifies full-width / half-width and compatibility-character variants into a
+  canonical form. This corresponds to disambiguation of representation rather
+  than fuzzing, and is applied in every configuration.
+- **Optional axes (selected)**: lowercasing, unification of kana type, folding
+  of prolonged sound marks, expansion of iteration marks, unification of the
+  dash family, removal of digit grouping, collapsing of whitespace, removal of
+  Latin diacritics, and so on. The host enables or disables these per
+  requirement.
 
-#[uniffi::export(name = "normalizeLoose")]
-pub fn normalize_loose_ffi(input: String) -> String {
-    normalize_loose(&input)
-}
+The selected axes are applied in a fixed canonical order. The purpose of fixing
+the order is to guarantee that the same set of axes always produces the same
+result (determinism), and thereby to guarantee that iOS and Android obtain
+identical keys. As a result, behaviour depends only on the set of selected axes,
+not on the order in which they are specified.
+
+### 2.3 The role of named presets
+
+Frequently used combinations of axes are given names, but these are aliases for
+particular configurations within the composable model, not independent
+mechanisms. The default preset folds letter case, full-width / half-width, and
+kana type; the other excludes the kana-type axis. Specifying individual axes
+without using a preset is also possible.
+
+An example of folding under the default preset:
+
 ```
-
-動作トレース:
-
-```
-ガ / が / ｶﾞ      → が     (全半角・かな種別は畳むが、濁点は区別)
-カ / か / ｶ       → か     (濁点ありとは別キー)
+ガ / が / ｶﾞ      → が     (width and kana type fold; voiced mark is kept distinct)
+カ / か / ｶ       → か     (a different key from the voiced form)
 パ / ぱ / ﾊﾟ      → ぱ
 Ｐ / P / ｐ / p   → p
 ヴ / ｳﾞ           → ゔ
 ```
 
----
+### 2.4 Keeping voiced and semi-voiced marks distinct
 
-## 3. 検索エンジン本体(確定版)
+By default the engine keeps voiced and semi-voiced marks (dakuten / handakuten)
+distinct (`か` and `が` are treated as different). This follows from the
+judgment that treating "が" and "か" as identical would be excessive fuzzing in
+Japanese search.
 
-`rusqlite`(bundled)+ FTS5 trigram。3文字未満は LIKE にフォールバック。
+This distinction derives from the choice of normalization form for the base
+process. Unifying full-width / half-width requires a compatibility-equivalent
+normalization; by adopting the composed form (a single combined character) in
+that step, the voiced mark is retained as a single character and the distinction
+is preserved. If the decomposed form were adopted, the voiced mark would be
+separated into an independent combining character, destabilizing the key against
+the goal of preserving the distinction. See appendices A and B for details.
 
-```rust
-use std::sync::{Arc, Mutex};
-use rusqlite::{Connection, params};
+The distinction is not a fixed rule but a consequence of the selected set of
+axes. The default set contains no step that folds voiced marks, so they are
+distinguished as a result. A separate axis for folding Latin diacritics
+(café → cafe, etc.) is available, and can be controlled independently of the
+Japanese voiced marks.
 
-uniffi::setup_scaffolding!();
+### 2.5 The correspondence between normalization and the index
 
-#[derive(uniffi::Record)]
-pub struct Hit { pub id: i64, pub score: f64 }
+Because normalization has become variable, a constraint arises: an index is
+inseparable from the normalization used to generate it.
 
-#[derive(Debug, thiserror::Error, uniffi::Error)]
-pub enum SearchError {
-    #[error("{0}")]
-    Db(String),
-}
-impl From<rusqlite::Error> for SearchError {
-    fn from(e: rusqlite::Error) -> Self { SearchError::Db(e.to_string()) }
-}
-
-#[derive(uniffi::Object)]
-pub struct SearchEngine { conn: Mutex<Connection> }
-
-#[uniffi::export]
-impl SearchEngine {
-    #[uniffi::constructor]
-    pub fn new(db_path: String) -> Result<Arc<Self>, SearchError> {
-        let conn = Connection::open(db_path)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;   // 読み取り並行性
-        conn.execute_batch(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS docs
-                 USING fts5(norm, tokenize='trigram');
-             CREATE TABLE IF NOT EXISTS entries(
-                 id INTEGER PRIMARY KEY, norm TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS meta(
-                 key TEXT PRIMARY KEY, value TEXT NOT NULL);",
-        )?;
-        Ok(Arc::new(Self { conn: Mutex::new(conn) }))
-    }
-
-    /// ホストは正規化前の生テキストを渡すだけ。正規化はエンジン内で実行。
-    pub fn index(&self, id: i64, text: String) -> Result<(), SearchError> {
-        let norm = normalize_loose(&text);
-        let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM docs WHERE rowid=?1", params![id])?;
-        conn.execute("INSERT INTO docs(rowid, norm) VALUES (?1, ?2)", params![id, &norm])?;
-        conn.execute("INSERT OR REPLACE INTO entries(id, norm) VALUES (?1, ?2)", params![id, &norm])?;
-        Ok(())
-    }
-
-    pub fn remove(&self, id: i64) -> Result<(), SearchError> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM docs WHERE rowid=?1", params![id])?;
-        conn.execute("DELETE FROM entries WHERE id=?1", params![id])?;
-        Ok(())
-    }
-
-    pub fn search(&self, query: String, limit: u32) -> Result<Vec<Hit>, SearchError> {
-        let q = normalize_loose(&query);
-        let conn = self.conn.lock().unwrap();
-
-        // trigram は3文字未満をマッチできない → LIKE フォールバック
-        if q.chars().count() < 3 {
-            let mut stmt = conn.prepare(
-                "SELECT id FROM entries WHERE norm LIKE '%'||?1||'%' LIMIT ?2")?;
-            let rows = stmt.query_map(params![q, limit],
-                |r| Ok(Hit { id: r.get(0)?, score: 0.0 }))?;
-            return Ok(rows.filter_map(Result::ok).collect());
-        }
-
-        // FTS5 構文の誤解釈を防ぐためフレーズとして渡す
-        let phrase = format!("\"{}\"", q.replace('"', "\"\""));
-        let mut stmt = conn.prepare(
-            "SELECT rowid, bm25(docs) FROM docs
-                 WHERE docs MATCH ?1 ORDER BY bm25(docs) LIMIT ?2")?;
-        let rows = stmt.query_map(params![phrase, limit],
-            |r| Ok(Hit { id: r.get(0)?, score: r.get(1)? }))?;
-        Ok(rows.filter_map(Result::ok).collect())
-    }
-}
-```
-
-### Cargo.toml
-
-```toml
-[lib]
-crate-type = ["cdylib", "staticlib"]   # Android=cdylib, iOS=staticlib
-
-[dependencies]
-uniffi = { version = "0.28", features = ["cli"] }
-rusqlite = { version = "0.32", features = ["bundled"] }  # FTS5/trigram 付き SQLite を同梱
-unicode-normalization = "0.1"
-thiserror = "1"
-
-[build-dependencies]
-uniffi = { version = "0.28", features = ["build"] }
-```
-
-バインディング生成:
-```
-uniffi-bindgen generate --library <built lib> --language swift
-uniffi-bindgen generate --library <built lib> --language kotlin
-```
-
-### ホスト側の使用イメージ
-
-```swift
-// iOS
-let engine = try SearchEngine(dbPath: url.path)
-try engine.index(id: note.searchID, text: "\(note.title) \(note.body)")
-let hits = try engine.search(query: "とうきよう", limit: 50)  // クエリ正規化もエンジン内
-```
-```kotlin
-// Android — メソッド名は完全に同一
-val engine = SearchEngine(dbPath)
-engine.index(note.searchId, "${note.title} ${note.body}")
-val hits = engine.search("トウキョウ", 50u)
-```
+Applying different normalizations at index time and at search time maps the same
+string to different keys, producing incorrect search results. Such errors are
+difficult to detect. The engine therefore retains an identifier of the
+normalization used to generate the index, and explicitly reports a mismatch if
+the index is opened under a different normalization. This rests on the judgment
+that stopping at the point of mismatch is operationally safer than returning
+incorrect results.
 
 ---
 
-## 4. 運用上の勘所
+## 3. Design rationale for the search strategy
 
-- **1〜2文字検索**: trigram は3文字未満を返さない。日本語は短いクエリが多いので
-  LIKE フォールバックは必須(上のコードに実装済み)。
-- **正規化はホストで再実装しない**: 表示・別用途でシャドウ列を持つ場合も、その値は
-  必ず `normalizeLoose` から生成する。Swift/Kotlin で書き直すと一致保証の意味が消える。
-- **スレッド安全性**: `Mutex<Connection>` は単純・確実だが直列化される。並行性が必要なら
-  `r2d2_sqlite` でコネクションプール + WAL に。UniFFI Object は `Send + Sync` 必須。
-- **バージョニングと再構築**: `meta` テーブルに `index_version` を持たせ、`normalize_loose`
-  を変更したら全件 `rebuild` を走らせる。`entries` に正規化前の元データではなく正規化済み
-  テキストを保管しているので、再構築は FTS へ流し直すだけで済む(※元テキスト保管に変える設計も可)。
-- **同期(本体DB → インデックス)**:
-  - iOS: SwiftData の**永続的履歴トラッキング**(iOS 18)で差分(挿入/更新/削除)を引いて反映
-  - Android: Room の **InvalidationTracker** か SQLite トリガで変更を捕捉
-  - オフライン編集が絡むなら本体に `searchIndexDirty` フラグを立てて遅延同期
+Whereas normalization governs the criterion by which two strings are considered
+identical, the search strategy governs the method by which the normalized query
+is matched against the text. The engine makes this matching method
+interchangeable as well.
+
+### 3.1 Default strategy — dictionary-free, rankable full-text search
+
+The default strategy builds the index by splitting characters into three-
+character units, and orders results by a relevance measure that accounts for
+term frequency and document length. There are two reasons for this choice.
+
+- **It is dictionary-free.** Dictionary-dependent segmentation, such as
+  morphological analysis, is highly accurate, but results differ when the
+  dictionary contents differ across environments. Three-character splitting uses
+  no dictionary, so substring matching holds even for Japanese, which is not
+  written with spaces, while preserving platform independence.
+- **It supports ranking.** It returns results ordered by relevance rather than
+  merely a match set, so it can serve as a general-purpose full-text search.
+
+### 3.2 Selecting a strategy by use case
+
+General-purpose ranked search is not always optimal. Prefix matching suits
+suggestion / autocompletion; suffix matching suits searching extensions or
+honorific suffixes. Multi-word search insensitive to word order, and approximate
+search based on edit distance or character-set similarity, are each required in
+different use cases.
+
+The engine implements all of these in the core and delegates only the selection
+to the binding. As with normalization, the choices are opened to the host while
+the implementation is centralized in the core, so that any selection matches on
+both platforms.
+
+Approximate matching (typo tolerance) is separated as a concern of the strategy
+side, as a kind of fuzziness not absorbed by normalization. Normalization
+handles deterministic folding, while distance-based fuzziness is selected as a
+strategy — a division of roles.
+
+### 3.3 Handling short queries
+
+A three-character-unit index cannot, in principle, retrieve queries shorter than
+three characters. In Japanese, however, one- and two-character queries occur
+frequently. Queries shorter than three characters are therefore switched
+automatically to substring matching. This is a measure to avoid passing the
+constraint of the indexing scheme on to the user.
 
 ---
 
-## 5. 今後の拡張ポイント(未実装)
+## 4. Index lifecycle and regeneration
 
-- **tight / loose 二段ランキング**: かな種別だけ畳んだ loose でヒットさせ、より厳密な
-  正規形(かな種別も保持)に一致するものを上位にする。再現率と適合率の両立。
-- **読み(よみがな)検索**: 漢字を読みで引きたい場合。辞書依存になるため、Rust コアに
-  **Lindera(形態素解析器)+ 固定辞書**を同梱すれば両OS一致のまま実現可能。
-  (OS内蔵の読み付与 = CFStringTokenizer / Android ICU は辞書が異なり一致しないため使わない)
-- **セマンティック検索**: 埋め込みベクトル + 近似最近傍。同じ Rust コアに載せれば一貫管理できる。
-- **ビルドパイプライン**: iOS 向け XCFramework、Android 向け AAR(`.so` 同梱)の自動化。
+### 4.1 Regeneration by retaining raw text
+
+The normalization approach may change in the future (adding axes, changing the
+default configuration, and so on). A design that requires the host to re-feed
+all documents in that event is undesirable.
+
+The engine therefore retains each document's pre-normalization text alongside
+its normalized form. This allows the engine, even when the normalization
+approach changes, to re-normalize all documents and reconstruct the index on its
+own. No host-side operation is required.
+
+This is a change from the original approach, which retained only normalized text
+and required re-feeding at rebuild time. Regeneration can be triggered
+explicitly, or performed automatically upon detecting a normalization mismatch
+when the index is opened.
+
+### 4.2 Synchronization with the primary store
+
+Because the search index is data derived from the primary store, a mechanism is
+needed to reflect changes in the primary store into the index. The specific
+mechanism depends on the primary store adopted, but in every case the common
+point is to capture changes and re-index the affected records. The following are
+examples for representative stores.
+
+- **iOS (the SwiftData case)**: use persistent history tracking to obtain and
+  apply the inserted / updated / deleted differences since the previous point.
+  Configuring it to also retain information about deleted records makes
+  integration with `remove(id)` straightforward.
+- **Android (the Room case)**: capture changes with a change-observation
+  mechanism, or by accumulating a change log.
+- For any store, when offline editing is involved, keep an unsynced flag on the
+  primary side and synchronize lazily.
+
+The choice of ID given to the engine also involves a design consideration.
+Rather than coupling directly to the primary store's internal identifier (such
+as `PersistentIdentifier` or rowid), use a stable key assigned by the
+application (such as a UUID) as the ID. This keeps the index independent of the
+primary store's implementation and preserves portability.
 
 ---
 
-# 関連知識の解説
+## 5. Structural guarantee of cross-platform consistency
 
-検索エンジン設計の背景にある技術を、判断の根拠とともに解説する。
+This design guarantees consistency of behaviour between iOS and Android by
+structure rather than by operational discipline; that is, it adopts a
+configuration in which an implementation that fails to match cannot arise.
 
-## A. Unicode 正規化(NFC / NFD / NFKC / NFKD)
+1. **No dependence on OS-built-in language processing.** The character
+   transformation and tokenization built into each OS use internationalization
+   libraries whose versions differ by OS, and results may diverge. The engine
+   includes the implementation of normalization in the core, so results are
+   fixed at build time.
+2. **The search-substrate runtime is bundled.** An OS-bundled search substrate
+   varies in version by device and differs in available features. The same
+   version is bundled in the core to fix behaviour.
+3. **The foundation is built only from dictionary-free processing.**
+   Normalization and the default indexing are deterministic processes that use
+   no dictionary. When introducing a dictionary-dependent feature (such as the
+   reading-based search described below), the dictionary is bundled into the
+   core with its version fixed, and OS features are not used.
+4. **Verification by a shared behaviour specification (spec).** The expected
+   normalization result and expected hit IDs for given inputs are written in a
+   language-independent shared file, and every OS's CI verifies the same file.
+   When a difference arises in the core, all platforms fail on the same case
+   simultaneously, so a situation in which only one diverges can be detected.
 
-同じ「見た目の文字」が複数のコードポイント列で表現できるため、比較・検索の前に
-正規化して表現を一意化する必要がある。正規化形は2軸の組み合わせで4種類ある。
+The top-level principle underlying these is to keep the implementation single.
+Because the bindings are auto-generated, Swift and Kotlin cannot become
+different implementations, and consistency of behaviour is a structural
+consequence.
 
-| | 合成(Composed) | 分解(Decomposed) |
+---
+
+## 6. Future extension points
+
+- **Reading (yomigana) search**: a feature for retrieving kanji by their
+  reading. Because it is dictionary-dependent, OS reading-assignment features
+  (which use different dictionaries per OS and do not match) are not used;
+  instead, a morphological analyzer and a fixed dictionary are bundled into the
+  core to maintain consistency across both OSes.
+- **Semantic search**: search by embedding vectors and approximate nearest
+  neighbours. Implementing it in the same core allows consistent management, as
+  with normalization and the existing strategies.
+- **Two-stage ranking**: a method that retrieves candidates broadly with a
+  loosely folded normalization, then ranks those matching a stricter canonical
+  form higher. Aimed at balancing recall and precision, it is positioned as an
+  extension of the existing framework of variable normalization combined with
+  strategies.
+
+---
+
+# Background
+
+This section explains the technologies behind the design decisions, together
+with their justifications.
+
+## A. Unicode normalization (NFC / NFD / NFKC / NFKD)
+
+Because the same glyph may be expressed by multiple code-point sequences, the
+representation must be normalized to a unique form before comparison or search.
+Normalization forms are classified into four kinds by the combination of two
+axes.
+
+| | Composed | Decomposed |
 |---|---|---|
-| **正準等価**(見た目・意味が同一) | NFC | NFD |
-| **互換等価**(意味は同じだが体裁が違う) | NFKC | NFKD |
+| **Canonical equivalence** (same glyph and meaning) | NFC | NFD |
+| **Compatibility equivalence** (corresponding meaning, differing presentation) | NFKC | NFKD |
 
-- **正準(Canonical)**: `が`(単一文字 U+304C)と `か`+濁点(U+304B U+3099)のような、
-  本質的に同じ文字の表現ゆれを統一する。
-- **互換(Compatibility, K)**: 全角 `Ａ` と半角 `A`、半角カナ `ｶ` と全角 `カ`、丸数字 `①` と
-  `1` のような「意味は対応するが体裁が異なる」文字を統一する。**全半角の畳み込みはこの K が担う。**
-- **合成 vs 分解**: 合成は結合済みの単一文字へ寄せ、分解は基底文字 + 結合文字へ分ける。
+- **Canonical**: unifies representational differences of the same character,
+  such as `が` (a single character) and `か` + voiced mark.
+- **Compatibility (K)**: unifies characters whose meaning corresponds but whose
+  presentation differs, such as full-width `Ａ` and half-width `A`, half-width
+  kana `ｶ` and full-width `カ`, or the circled digit `①` and `1`. Folding of
+  full-width / half-width is handled by this K.
+- **Composed vs. decomposed**: composition unifies to a single combined
+  character; decomposition separates into a base character and combining
+  characters.
 
-### なぜ本設計は NFKC か
+### Rationale for adopting NFKC as the base process
 
-- 全半角を畳みたい → **K(互換)が必須**。NFC/NFD では半角カナが畳まれない。
-- 濁点は**区別**したい → **合成(C)** を選ぶ。NFKD(分解)だと `が`→`か`+U+3099 と
-  結合文字に割れ、濁点を保持したいのにキーが不安定化する。NFKC なら `が` は単一の
-  合成文字のまま安定する。
+- Folding full-width / half-width requires compatibility (K). NFC / NFD do not
+  fold half-width kana.
+- Because voiced marks are kept distinct by default, the composed form (C) is
+  adopted. In the decomposed form (NFKD), `が` separates into `か` + a combining
+  voiced mark, destabilizing the key against the goal of preserving the voiced
+  mark. In NFKC, `が` is stable as a single combined character.
 
-> 補足: 以前「濁点も曖昧にする」場合は NFKD で分解してから結合文字 U+3099(濁点)/
-> U+309A(半濁点)を除去する手法だった。今回は濁点を区別するので、その除去ステップごと不要。
+> Note: if the requirement were to also fuzz voiced marks, one approach is to
+> decompose and then remove the combining voiced / semi-voiced marks. Because
+> the engine keeps voiced marks distinct by default, this removal is not
+> performed (it can be added as a folding axis if needed).
 
-## B. 結合文字と濁点
+## B. Combining characters and voiced marks
 
-- **U+3099**: 結合濁点(combining)。**U+309B**(` ゛`)は単独表示用で別物。
-- **U+309A**: 結合半濁点。**U+309C**(` ゜`)は単独用。
-- 半角濁点 **U+FF9E** / 半角半濁点 **U+FF9F** は、NFKC で前の半角カナと合成され、
-  全角の合成済み濁点付きカナ(例: `ｶ`+`ﾞ` → `が`)になる。これにより半角入力の
-  濁点も正しく1文字に揃う。
+- The combining voiced and semi-voiced marks are combining characters displayed
+  superimposed on the preceding character, at code points distinct from the
+  standalone-display symbols.
+- Half-width voiced and semi-voiced marks are composed, by compatibility
+  normalization, with the preceding half-width kana into a full-width composed
+  voiced kana (for example, half-width `ｶ` + `ﾞ` → `が`). This unifies voiced
+  marks of half-width input into a single character as well.
 
-## C. SQLite FTS5 と trigram トークナイザ
+## C. Full-text search and trigram (three-character split) tokenization
 
-- **FTS5**: SQLite の全文検索拡張。仮想テーブル `USING fts5(...)` で作り、`MATCH` 演算子で
-  検索、`bm25()` でスコアリング、`snippet()` で抜粋が取れる。
-- **トークナイザの選択が日本語の鍵**:
-  - `unicode61`(既定): 空白区切り前提。**日本語はほぼ機能しない**(分かち書きしないため)。
-  - **`trigram`**: 文字を3文字単位に機械分割する。空白のない CJK でも部分一致が成立するため
-    日本語向き。辞書を一切引かないので**プラットフォーム非依存**(= 両OS一致に最適)。
-  - 形態素解析(MeCab/Lindera): 単語境界で正確に分割。精度は最高だが辞書同梱が必要で重い。
-- **trigram の制約**: 3文字未満のクエリはマッチ不可。→ 本設計では LIKE フォールバックで補う。
-- **bm25()**: 単語頻度と文書長を加味した定番ランキング指標。値が小さいほど良適合(昇順ソート)。
+- **The choice of tokenizer is the crux of Japanese processing.**
+  - A tokenizer that assumes whitespace separation hardly functions for
+    Japanese, which is not space-segmented.
+  - **Three-character split (trigram)**: splits characters into three-character
+    units. Substring matching holds even for Japanese without spaces, and
+    because it uses no dictionary it is platform-independent.
+  - Morphological analysis (dictionary-dependent): segments precisely at word
+    boundaries and is the most accurate, but requires bundling a dictionary,
+    is heavy, and the dictionary differences threaten consistency.
+- **Constraint of three-character split**: queries shorter than three characters
+  cannot be retrieved, so this design compensates with a fallback to substring
+  matching.
+- **Relevance measure**: orders results by a measure that accounts for term
+  frequency and document length.
 
-## D. UniFFI(言語間バインディング自動生成)
+## D. Automatic generation of cross-language bindings (UniFFI)
 
-Mozilla 製。Rust で書いたロジックを Swift / Kotlin から呼べるバインディングを自動生成する。
-**実装が1つ**になるため、クロスプラットフォームのアルゴリズム一致を構造的に保証できる。
+A mechanism that auto-generates bindings for languages such as Swift and Kotlin
+from logic written in Rust. Because the implementation is single, algorithmic
+consistency across platforms can be guaranteed structurally. The distinctions
+among value objects, classes with methods, error types, and exported functions
+are preserved while mapping to each language's idiomatic forms (Swift structs
+and exceptions, Kotlin data classes and exceptions, and so on). Asynchronous
+processing is likewise mapped to each language's asynchronous mechanism.
 
-- **公開方法**: 属性マクロで Rust 側に印を付ける。
-  - `#[derive(uniffi::Record)]`: 値オブジェクト(構造体)。Swift の struct / Kotlin の data class へ。
-  - `#[derive(uniffi::Object)]`: 参照型・メソッドを持つクラス。`Arc<Self>` で返す。
-  - `#[derive(uniffi::Error)]`: 例外型。Swift は `throws`、Kotlin は例外へ。
-  - `#[uniffi::export]`: 関数や impl ブロックを公開。
-- **制約**: 公開する Object は `Send + Sync` でなければならない → 内部可変性は `Mutex` 等で包む。
-- **生成物**: iOS は XCFramework(`staticlib`)、Android は `.so`(`cdylib`)+ Kotlin ラッパ。
-- **非同期**: `async fn` も export 可能(Swift の async / Kotlin の suspend に対応)。
-
-## E. クロスプラットフォーム一致を「構造的に」保証する原則
-
-本設計が一致を保証できているのは、以下を徹底しているため。
-
-1. **OS 内蔵 ICU に依存しない**: iOS の `applyingTransform` も Android の
-   `android.icu.Transliterator` も中身は ICU だが、**OS バージョンごとに ICU のバージョンが
-   異なり結果がずれうる**。本設計は純 Rust の `unicode-normalization` を**バンドル**するため、
-   正規化結果がビルド時点でバイト単位一致する。
-2. **SQLite を同梱**: OS 同梱 SQLite はバージョンが端末ごとに違う(trigram は 3.34+)。
-   rusqlite の `bundled` で同一バージョンを焼き込み、挙動を固定する。
-3. **辞書非依存の処理だけで構成**: 正規化(NFKC・かな写像・小文字化)と trigram は
-   いずれも辞書を引かない決定的処理。読み付与のような辞書依存処理を入れる場合は、
-   辞書ごと Rust コアに同梱してバージョンをピン留めする(OS 機能は使わない)。
-4. **ゴールデンテストで担保**: 「入力 → 期待される正規化文字列 / 期待ヒット ID」を
-   共有 JSON にし、両OSの CI で同一ファイルを検証する。片方だけ静かにずれても気づける。
-
-## F. SwiftData / Room とインデックスの同期点
-
-- **SwiftData 永続的履歴トラッキング(iOS 18)**: 変更履歴をトークンで追跡し、前回トークン以降の
-  挿入/更新/削除の差分を取得できる。`@Attribute(.preserveValueOnDeletion)` と併用すると
-  削除済みレコードの情報も拾えるため、`remove(id)` 連携がきれいに書ける。
-- **Room InvalidationTracker**: テーブル変更を監視するオブザーバ。変更通知を受けて該当行を
-  再 index する。あるいは SQLite トリガで変更ログを溜める方式も可。
-- **ID の持ち方**: `PersistentIdentifier`(SwiftData)や rowid(Room)に直接結合させず、
-  アプリ側で振る安定キー(UUID 等)をエンジンの ID にすると、本体DB実装からインデックスを
-  独立させられ移植性が保てる。
+By keeping the implementation single and having both OSes operate through
+identical code, consistency of normalization and search is structurally
+guaranteed.
