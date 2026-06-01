@@ -59,8 +59,6 @@ unfydqry/
 │   └── example/                 Flutter sample app (same 8-record seed)
 └── docs/
     ├── README.ja.md
-    ├── ios.md                    iOS (Swift) guide — install / usage / build / tests / release
-    ├── android.md                Android (Kotlin) guide — install / usage / build / tests / release
     ├── flutter-plugin.md
     └── cross-platform-search-engine-design.md
 ```
@@ -72,18 +70,55 @@ unfydqry/
 | FFI module | `unfydqryFFI` (via the modulemap inside the XCFramework) | `libunfydqry.so` loaded through JNA |
 | Distributable | `ios/UnifiedQuery.xcframework` (arm64 device + arm64/x86_64 sim + arm64 mac) | `android/jniLibs/{arm64-v8a,armeabi-v7a,x86_64}/libunfydqry.so` |
 
-## Platform guides
+## Install
 
-Per-platform setup, quick-usage snippets, native-artifact builds, test layout,
-and release flow each live in a dedicated guide. The cross-platform sections
-below (behaviour configuration, the `spec/` test contract) apply to every
-binding.
+### iOS (Swift Package Manager)
+Add the package using a tagged release:
 
-| Platform | Guide | Library |
-|---|---|---|
-| iOS (Swift) | [`docs/ios.md`](docs/ios.md) | `import UnifiedQuery` (SwiftPM) |
-| Android (Kotlin) | [`docs/android.md`](docs/android.md) | `io.github.0x0c:unifiedquery` (Gradle / Maven Central) |
-| Flutter (Dart) | [`docs/flutter-plugin.md`](docs/flutter-plugin.md) | `unfydqry` (Dart package, Git dependency) |
+```swift
+// Package.swift
+.package(url: "https://github.com/0x0c/unfydqry.git", from: "0.1.0")
+```
+
+The xcframework is **not** committed to Git. Two forms of `Package.swift`
+co-exist:
+- On `main` and in every PR, `Package.swift` references the xcframework by
+  local path (`binaryTarget(path:)`). Local dev and the swift-tests CI build
+  the xcframework into `ios/UnifiedQuery.xcframework` first and then run
+  `swift test` against that local copy.
+- On every release tag, `.github/workflows/release-xcframework.yml` rewrites
+  `Package.swift` to `binaryTarget(url:checksum:)` pointing at the
+  `UnifiedQuery.xcframework.zip` attached to that same GitHub Release, and
+  tags the rewritten commit. SwiftPM consumers resolve the tag and see the
+  URL form. `main` itself is never modified by the release workflow, so
+  SwiftPM's manifest cache on dev machines stays consistent.
+
+## Quick usage
+
+### iOS (Swift)
+```swift
+import UnifiedQuery
+
+let dbURL = FileManager.default
+    .urls(for: .documentDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("search_index.sqlite")
+let engine = try SearchEngine(dbPath: dbURL.path)
+
+try engine.index(id: 1, text: "Ｐｙｔｈｏｮ 入門")
+let hits = try engine.search(query: "python", limit: 50)
+// → [Hit(id: 1, score: -1.521)]
+```
+
+### Android (Kotlin)
+```kotlin
+import uniffi.unfydqry.SearchEngine
+
+val engine = SearchEngine(filesDir.resolve("search_index.sqlite").absolutePath)
+
+engine.index(1L, "Ｐｙｔｈｏｮ 入門")
+val hits = engine.search("python", 50u)
+// → [Hit(id=1, score=-1.521)]
+```
 
 ## Configuring behaviour
 
@@ -156,7 +191,21 @@ Notes:
 
 ### Selecting a combination
 
-The combination is chosen on the binding side — see the per-language calls in the [iOS](docs/ios.md#selecting-a-combination), [Android](docs/android.md#selecting-a-combination), and [Flutter](docs/flutter-plugin.md) guides.
+iOS (Swift):
+```swift
+let engine = try SearchEngine.withConfig(
+    dbPath: dbURL.path,
+    config: EngineConfig(normalize: .nfkcCaseFold, strategy: .prefix)
+)
+```
+
+Android (Kotlin):
+```kotlin
+val engine = SearchEngine.withConfig(
+    dbPath,
+    EngineConfig(NormalizeProfile.NFKC_CASE_FOLD, SearchStrategy.PREFIX),
+)
+```
 
 To inspect normalization directly there are also free functions: `normalizeLoose(input)` (always the `loose` profile), `normalizeWithProfile(input, profile)`, and `normalizeWithOptions(input, options)` for a composable step set.
 
@@ -175,14 +224,62 @@ cargo test --all-targets         # unit + conformance
 cargo build --release
 ```
 
-### Platform builds
+### Benchmarks
 
-Building the native artifacts (XCFramework / `.so`) and the sample apps is
-covered per platform:
+The Rust core includes [Criterion](https://github.com/bheisler/criterion.rs) benchmarks covering search, indexing, and normalization. All benchmarks use an in-memory SQLite database with deterministically generated Japanese text.
 
-- iOS (XCFramework + Xcode sample) — [`docs/ios.md#build-swiftpm--xcode-sample`](docs/ios.md#build-swiftpm--xcode-sample)
-- Android (`.so` via cargo-ndk + Gradle sample) — [`docs/android.md#build-gradle-sample`](docs/android.md#build-gradle-sample)
-- Flutter — [`docs/flutter-plugin.md#building-native-artifacts`](docs/flutter-plugin.md#building-native-artifacts)
+```sh
+cd core
+
+# Run all benchmarks
+cargo bench
+
+# Run a specific benchmark suite
+cargo bench --bench search       # search strategies (8 strategies × 3 corpus sizes × 3 query lengths)
+cargo bench --bench index        # bulk index, single append, and reindex
+cargo bench --bench normalize    # normalization profiles and individual steps
+
+# Filter to a specific group or case
+cargo bench -- "search/trigram_bm25"
+cargo bench -- "index/bulk"
+cargo bench -- "normalize/profile"
+```
+
+After the first run, Criterion saves baseline results under `core/target/criterion/`. Subsequent runs compare against the baseline and report regressions. HTML reports are generated at `core/target/criterion/report/index.html`.
+
+### iOS (SwiftPM + Xcode sample)
+```sh
+# Build for all 4 Apple targets, regenerate the Swift binding, assemble the
+# fat XCFramework, zip it for SwiftPM consumption, and print the binaryTarget
+# checksum. Produces ios/UnifiedQuery.xcframework{,.zip,.zip.sha256}.
+bash scripts/build-xcframework.sh
+
+# Tests (Package.swift sees the local xcframework and uses it directly)
+swift test
+
+# Sample app
+cd ios/sample
+xcodegen generate                # project.yml → SearchSample.xcodeproj
+open SearchSample.xcodeproj
+```
+
+### Android (Gradle sample)
+```sh
+# Generate the .so files via cargo-ndk and place them under jniLibs/
+cd core
+ANDROID_NDK_HOME=/path/to/ndk cargo ndk \
+  -t arm64-v8a -t armeabi-v7a -t x86_64 \
+  -o ../android/jniLibs build --release
+
+# JVM unit tests (load the macOS arm64 dylib through JNA)
+cargo build --release --target aarch64-apple-darwin
+cd ../android/sample
+gradle :unifiedquery:test
+
+# Sample app
+gradle :app:assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
 
 ### Sample apps
 
@@ -256,10 +353,25 @@ for cross-platform behaviour**. Schema, conventions (versioning, `id`,
 
 ### Per-platform test files
 
-The native (lifecycle + query) test files for each binding are listed in its
-guide — iOS in [`docs/ios.md#tests`](docs/ios.md#tests), Android in
-[`docs/android.md#tests`](docs/android.md#tests). Both follow the same
-four-layer split as the Rust core below.
+iOS (`ios/Tests/UnifiedQueryTests/`):
+
+| File | Layer | Notes |
+|---|---|---|
+| `SpecLoader.swift` | infrastructure | Decodes `spec/*.json` into Swift structs. Locates `spec/` from `#filePath` (no SwiftPM resources). |
+| `SpecDrivenTests.swift` | 2 — spec-driven | Uses `@Test(arguments:)` to expand spec cases into one parameterized test each. |
+| `NormalizeTests.swift` | 4 — native (normalize) | Inequality (`が ≠ か`), idempotency, long-input smoke. |
+| `SearchEngineLifecycleTests.swift` | 3 — lifecycle | `:memory:`, file creation, reopen persistence, invalid-path throws, isolation between paths. |
+| `SearchEngineQueryTests.swift` | 4 — native (query) | bm25 ordering, `limit`, score sanity, FTS5 special chars, concurrency smoke via `withTaskGroup`. |
+
+Android (`android/sample/unifiedquery/src/test/kotlin/com/unfydqry/unifiedquery/`):
+
+| File | Layer | Notes |
+|---|---|---|
+| `Spec.kt` | infrastructure | Decodes `spec/*.json` via Jackson. Reads `unfydqry.spec.dir` set by `build.gradle.kts`. |
+| `SpecDrivenTest.kt` | 2 — spec-driven | `@ParameterizedTest` + `@MethodSource` mirrors the Swift expansion. |
+| `NormalizeTest.kt` | 4 — native (normalize) | Same inequality / idempotency / long-input cases as Swift. |
+| `SearchEngineLifecycleTest.kt` | 3 — lifecycle | Same shape as Swift, using `java.nio.file` and `SearchException`. |
+| `SearchEngineQueryTest.kt` | 4 — native (query) | bm25 ordering, `limit`, score sanity, FTS5 special chars, concurrency via `ExecutorService`. |
 
 Rust (`core/`):
 
@@ -326,10 +438,27 @@ Two release workflows live in `.github/workflows/`:
 | iOS XCFramework | `release-xcframework.yml` | manual (tag input, e.g. `v0.1.0`) | GitHub Release asset (`UnifiedQuery.xcframework.zip`) |
 | Android AAR | `release-aar.yml` | version tag (`X.Y.Z`) or manual dispatch | Maven Central (`:unifiedquery` AAR) |
 
-Step-by-step release procedures are in each platform guide:
+The AAR workflow rebuilds `libunfydqry.so` for all three ABIs via `cargo-ndk`,
+verifies the committed Kotlin binding is in sync with the Rust core, then
+publishes the signed AAR through vanniktech-maven-publish.
 
-- iOS XCFramework — [`docs/ios.md#releasing-xcframework`](docs/ios.md#releasing-xcframework)
-- Android AAR — [`docs/android.md#releasing-aar`](docs/android.md#releasing-aar)
+### iOS xcframework
+
+The xcframework is shipped via GitHub Releases, not committed to Git. To cut a
+new release:
+
+1. Land all intended changes on `main`.
+2. Open Actions → **Release XCFramework** → *Run workflow*, enter a tag like
+   `v0.1.0`.
+3. The workflow runs `scripts/build-xcframework.sh`, rewrites the
+   `// --- BINARY-TARGET START/END ---` block in `Package.swift` to the URL +
+   checksum form on a detached HEAD off of `main`, tags that commit with the
+   version, pushes the tag (but not the branch), and publishes a Release with
+   `UnifiedQuery.xcframework.zip` attached.
+
+The tag commit's `Package.swift` is created by the same run that uploads the
+asset, so SwiftPM consumers never see a tag whose checksum disagrees with the
+attached zip. `main` is left unchanged.
 
 ## Namespace map
 
