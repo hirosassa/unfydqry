@@ -6,7 +6,7 @@ JSON, so all three runners (`swift test`, `gradle :unifiedquery:test`,
 Any drift in the Rust normalization / search logic surfaces in all three CIs
 at once instead of leaking through silent test divergence.
 
-Background and rationale: see [`../docs/cross-platform-search-engine-design.md`](../docs/cross-platform-search-engine-design.md) §E.4.
+Background and rationale: see [`../docs/cross-platform-search-engine-design.md`](../docs/cross-platform-search-engine-design.md) §5 (point 4: verification by a shared behaviour specification).
 
 ## Files
 

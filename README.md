@@ -1,12 +1,12 @@
 # unfydqry
 
-> 🌐 日本語版: [docs/README.ja.md](docs/README.ja.md)
+> 🌐 日本語版: [docs/ja/README.md](docs/ja/README.md)
 
 A shared full-text search engine usable from both iOS (SwiftData) and Android (Room).
 A single search core written in **Rust + UniFFI** is consumed as a SwiftPM package on
 iOS and as a Gradle module on Android.
 
-Design rationale lives in [`docs/cross-platform-search-engine-design.md`](docs/cross-platform-search-engine-design.md) (Japanese).
+Design rationale lives in [`docs/cross-platform-search-engine-design.md`](docs/cross-platform-search-engine-design.md) (日本語版: [`docs/ja/cross-platform-search-engine-design.md`](docs/ja/cross-platform-search-engine-design.md)).
 
 [![Swift Tests](https://github.com/0x0c/unfydqry/actions/workflows/swift-tests.yml/badge.svg)](https://github.com/0x0c/unfydqry/actions/workflows/swift-tests.yml)
 [![Kotlin Tests](https://github.com/0x0c/unfydqry/actions/workflows/kotlin-tests.yml/badge.svg)](https://github.com/0x0c/unfydqry/actions/workflows/kotlin-tests.yml)
@@ -58,11 +58,13 @@ unfydqry/
 │   ├── test/                    mock-channel Dart unit tests
 │   └── example/                 Flutter sample app (same 8-record seed)
 └── docs/
-    ├── README.ja.md
     ├── ios.md                    iOS (Swift) guide — install / usage / build / tests / release
     ├── android.md                Android (Kotlin) guide — install / usage / build / tests / release
     ├── flutter-plugin.md
-    └── cross-platform-search-engine-design.md
+    ├── cross-platform-search-engine-design.md   design rationale (English)
+    └── ja/                       Japanese docs
+        ├── README.md             Japanese README
+        └── cross-platform-search-engine-design.md   design rationale (Japanese)
 ```
 
 | | iOS | Android |

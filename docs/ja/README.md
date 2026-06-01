@@ -1,6 +1,6 @@
 # unfydqry(日本語版)
 
-> 🌐 English version: [README.md](../README.md)
+> 🌐 English version: [README.md](../../README.md)
 
 iOS(SwiftData)と Android(Room)の両方から使える、共通の全文検索エンジン。
 **Rust + UniFFI** で実装した単一の検索コアを SwiftPM パッケージと Gradle モジュールから利用する。
@@ -57,11 +57,13 @@ unfydqry/
 │   ├── test/                    モックチャネルの Dart ユニットテスト
 │   └── example/                 Flutter サンプルアプリ(同じ8件 seed)
 └── docs/
-    ├── README.ja.md
     ├── ios.md                    iOS(Swift)ガイド — 導入 / 使い方 / ビルド / テスト / リリース
     ├── android.md                Android(Kotlin)ガイド — 導入 / 使い方 / ビルド / テスト / リリース
     ├── flutter-plugin.md
-    └── cross-platform-search-engine-design.md
+    ├── cross-platform-search-engine-design.md   設計方針(英語)
+    └── ja/                       日本語版ドキュメント
+        ├── README.md             この日本語版 README
+        └── cross-platform-search-engine-design.md   設計方針(日本語)
 ```
 
 | | iOS | Android |
@@ -77,9 +79,9 @@ unfydqry/
 
 | プラットフォーム | ガイド | ライブラリ |
 |---|---|---|
-| iOS(Swift) | [`ios.md`](ios.md) | `import UnifiedQuery`(SwiftPM) |
-| Android(Kotlin) | [`android.md`](android.md) | `io.github.0x0c:unifiedquery`(Gradle / Maven Central) |
-| Flutter(Dart) | [`flutter-plugin.md`](flutter-plugin.md) | `unfydqry`(Dart パッケージ、Git 依存) |
+| iOS(Swift) | [`ios.md`](../ios.md) | `import UnifiedQuery`(SwiftPM) |
+| Android(Kotlin) | [`android.md`](../android.md) | `io.github.0x0c:unifiedquery`(Gradle / Maven Central) |
+| Flutter(Dart) | [`flutter-plugin.md`](../flutter-plugin.md) | `unfydqry`(Dart パッケージ、Git 依存) |
 
 > ガイド本体は英語です。
 
@@ -154,7 +156,7 @@ unfydqry/
 
 ### 組み合わせの選択
 
-組み合わせはバインディング側で選ぶ — 言語ごとの呼び出し例は [iOS](ios.md#selecting-a-combination)・[Android](android.md#selecting-a-combination)・[Flutter](flutter-plugin.md) の各ガイドを参照。
+組み合わせはバインディング側で選ぶ — 言語ごとの呼び出し例は [iOS](../ios.md#selecting-a-combination)・[Android](../android.md#selecting-a-combination)・[Flutter](../flutter-plugin.md) の各ガイドを参照。
 
 正規化を直接確認するための関数もある: `normalizeLoose(input)`(常に `loose` プロファイル)、`normalizeWithProfile(input, profile)`、合成ステップ用の `normalizeWithOptions(input, options)`。
 
@@ -177,9 +179,9 @@ cargo build --release
 
 ネイティブ成果物(XCFramework / `.so`)とサンプルアプリのビルドは各プラットフォームのガイドに記載:
 
-- iOS(XCFramework + Xcode サンプル) — [`ios.md`](ios.md#build-swiftpm--xcode-sample)
-- Android(cargo-ndk で `.so` + Gradle サンプル) — [`android.md`](android.md#build-gradle-sample)
-- Flutter — [`flutter-plugin.md`](flutter-plugin.md#building-native-artifacts)
+- iOS(XCFramework + Xcode サンプル) — [`ios.md`](../ios.md#build-swiftpm--xcode-sample)
+- Android(cargo-ndk で `.so` + Gradle サンプル) — [`android.md`](../android.md#build-gradle-sample)
+- Flutter — [`flutter-plugin.md`](../flutter-plugin.md#building-native-artifacts)
 
 ### サンプルアプリ
 
@@ -210,7 +212,7 @@ cargo build --release
 | 4. native query(データ駆動でないもの) | 各プラットフォームの `*QueryTests` / `*Tests` | bm25 の順序、`limit` のカウント、score の sanity(LIKE 経路は `0.0`、FTS5 経路は有限の非ゼロ)、FTS5 予約文字の非例外、並行検索のスモーク。 | `(input → expected)` で書けるもの — それは `spec/` 側に置く。 |
 
 原則は **「単純な値の等価で書けるなら `spec/` に書く。それ以外だけ native に
-残す」**。スコープ判断のソースは [`spec/README.md`](../spec/README.md) で
+残す」**。スコープ判断のソースは [`spec/README.md`](../../spec/README.md) で
 別途記述している。
 
 ### 実行コマンド
@@ -228,7 +230,7 @@ cargo build --release
 `spec/normalize.json` と `spec/search.json` は **プラットフォーム間で共有
 する振る舞いの単一の真実** である。スキーマ・運用ルール
 (バージョニング、`id`、`description`、スコープ判断)と意図は
-[`spec/README.md`](../spec/README.md) にまとまっている。要点だけ:
+[`spec/README.md`](../../spec/README.md) にまとまっている。要点だけ:
 
 - 各ファイルにバージョン番号が付いている(`"version": 1`)。ローダはこの
   バージョンが期待値と一致しないときは実行を拒否する — 将来スキーマを
@@ -246,7 +248,7 @@ cargo build --release
 
 ### 各プラットフォームのテストファイル
 
-各バインディングの native(lifecycle + query)テストファイルは、それぞれのガイドに記載 — iOS は [`ios.md`](ios.md#tests)、Android は [`android.md`](android.md#tests)。どちらも下記 Rust コアと同じ 4 層構成に従う。
+各バインディングの native(lifecycle + query)テストファイルは、それぞれのガイドに記載 — iOS は [`ios.md`](../ios.md#tests)、Android は [`android.md`](../android.md#tests)。どちらも下記 Rust コアと同じ 4 層構成に従う。
 
 Rust(`core/`):
 
@@ -274,7 +276,7 @@ native の query / lifecycle 層は **Rust 側には敢えて置いていない*
      ビルドシステムのプロパティ経由、Swift のようにテストファイルから
      ディレクトリを遡る、Rust 統合テストのように相対パスを使う、
      どれでも良い)。
-   - [`spec/README.md`](../spec/README.md) のスキーマに合わせて両 JSON
+   - [`spec/README.md`](../../spec/README.md) のスキーマに合わせて両 JSON
      ファイルを型付き構造体にデコードする(`version`、`cases`、
      `scenarios`、`seeded_matrices`、`ops` は `index` / `remove` の
      tagged union)。
@@ -316,8 +318,8 @@ AAR ワークフローは `cargo-ndk` で全3 ABI 分の `libunfydqry.so` を再
 
 手順の詳細は各プラットフォームのガイドに記載:
 
-- iOS XCFramework — [`ios.md`](ios.md#releasing-xcframework)
-- Android AAR — [`android.md`](android.md#releasing-aar)
+- iOS XCFramework — [`ios.md`](../ios.md#releasing-xcframework)
+- Android AAR — [`android.md`](../android.md#releasing-aar)
 
 ## 応用プラットフォーム対応
 
@@ -325,11 +327,11 @@ AAR ワークフローは `cargo-ndk` で全3 ABI 分の `libunfydqry.so` を再
 メソッドチャネル API でラップしている。現在はリポジトリ内の `flutter/`
 (Dart パッケージ `unfydqry`)に置かれ、CI も `main` で走る — 上部の
 Flutter Tests バッジを参照。詳細は
-[`flutter-plugin.md`](flutter-plugin.md) にまとめてある。
+[`flutter-plugin.md`](../flutter-plugin.md) にまとめてある。
 
 | ランタイム | 配置 | ドキュメント |
 |---|---|---|
-| Flutter | `flutter/`(Dart パッケージ `unfydqry`) | [`flutter-plugin.md`](flutter-plugin.md) |
+| Flutter | `flutter/`(Dart パッケージ `unfydqry`) | [`flutter-plugin.md`](../flutter-plugin.md) |
 
 このプラグインは iOS / Android の配布物には**含まれない**。先にネイティブ
 成果物(XCFramework + `.so`)をビルドする必要があり、すでに Flutter を
@@ -357,4 +359,4 @@ cd flutter/example && flutter run
 
 ## ライセンス
 
-MIT ライセンス。[LICENSE](../LICENSE) を参照。
+MIT ライセンス。[LICENSE](../../LICENSE) を参照。

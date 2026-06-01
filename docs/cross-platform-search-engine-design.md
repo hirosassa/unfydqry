@@ -1,330 +1,408 @@
-# クロスプラットフォーム検索エンジン 設計方針
+# Cross-platform search engine — design rationale
 
-iOS(SwiftData)と Android(Room)の両方から使える、共通の全文検索エンジンを
-**Rust + UniFFI** で実装するための設計思想をまとめる。本書はコードではなく
-**「なぜそう設計するか」**を扱う。具体的な API やビルド手順はプラットフォーム
-別ガイド([`ios.md`](ios.md) / [`android.md`](android.md) /
-[`flutter-plugin.md`](flutter-plugin.md))を参照。
+> 🌐 日本語版: [`ja/cross-platform-search-engine-design.md`](ja/cross-platform-search-engine-design.md)
 
-このエンジンの根本思想は、検索の挙動を二つの独立した問いに分解することにある:
+This document records the design decisions, and their justifications, behind a
+shared full-text search engine usable from both iOS and Android, implemented in
+**Rust + UniFFI**. It concerns the design rationale rather than the concrete
+implementation. For the API and build steps, see the per-platform guides
+([`ios.md`](ios.md) / [`android.md`](android.md) /
+[`flutter-plugin.md`](flutter-plugin.md)).
 
-1. **何を「同じ文字列」とみなすか** — 正規化(normalization)
-2. **クエリと本文をどう突き合わせるか** — 検索戦略(search strategy)
+The design separates search behaviour into two independent concerns:
 
-どちらも**ホスト側のバインディングが選択**し、**実装はすべて Rust の1コアに置く**。
-選択肢の組み合わせは要件に応じて変えられる一方、選んだ挙動が iOS と Android で
-食い違うことは構造的に起こりえない。
+1. the criterion by which two strings are considered identical — normalization;
+2. the method by which a query is matched against the text — the search strategy.
+
+Both are selected by the host-side binding, while the implementation resides
+entirely in a single Rust core. The combination of options can be changed to
+suit requirements, yet the selected behaviour cannot structurally diverge
+between iOS and Android.
 
 ---
 
-## 1. 全体アーキテクチャ
+## 1. Overall architecture
 
-### 1.1 基本構成 — インデックス所有型
+### 1.1 Index-owning model
 
-検索エンジンは **自前の検索インデックスを所有**する。アプリ本体のデータ
-(SwiftData / Room)はあくまで「正(source of truth)」であり、エンジンは
-それとは独立した「検索インデックス」として存在する。
+The search engine owns its own search index. The application's primary data is
+the source of truth, and the engine exists as a search index independent of it.
+
+The location of the primary data is outside the engine's concern. SwiftData
+(iOS) and Room (Android), cited throughout this document, are representative
+examples only; the actual store may be a relational database, a document store,
+files, a remote server, or anything else. The only requirement the engine
+places on the primary data is that each record can be re-fetched by a stable
+ID. It does not depend on the storage form or location.
 
 ```
-┌─────────────────────────────┐     ┌──────────────────────────────┐
-│  iOS アプリ                  │     │  Android アプリ               │
-│  ┌────────────────────────┐ │     │ ┌──────────────────────────┐ │
-│  │ SwiftData (本体DB=正)   │ │     │ │ Room (本体DB=正)          │ │
-│  └───────────┬────────────┘ │     │ └────────────┬─────────────┘ │
-│              │ index/remove  │     │              │ index/remove  │
-│  ┌───────────▼────────────┐ │     │ ┌────────────▼─────────────┐ │
-│  │ SearchEngine (Swift binding) │ │ │ SearchEngine (Kotlin binding)│
-│  └───────────┬────────────┘ │     │ └────────────┬─────────────┘ │
-└──────────────┼──────────────┘     └──────────────┼───────────────┘
+┌─────────────────────────────┐     ┌─────────────────────────────┐
+│  iOS app                     │     │  Android app                │
+│  ┌────────────────────────┐ │     │  ┌────────────────────────┐ │
+│  │ Primary store (truth)  │ │     │  │ Primary store (truth)  │ │
+│  └───────────┬────────────┘ │     │  └───────────┬────────────┘ │
+│              │ index/remove  │     │              │ index/remove │
+│  ┌───────────▼────────────┐ │     │  ┌───────────▼────────────┐ │
+│  │ SearchEngine (Swift)   │ │     │  │ SearchEngine (Kotlin)  │ │
+│  └───────────┬────────────┘ │     │  └───────────┬────────────┘ │
+└──────────────┼──────────────┘     └──────────────┼──────────────┘
                │                                    │
         ┌──────▼────────────────────────────────────▼──────┐
-        │      Rust コア (UniFFI)  ※実装は物理的に1つ        │
-        │   正規化 / インデックス管理 / ランキング / 突き合わせ │
+        │      Rust core (UniFFI)  — one physical impl      │
+        │  normalization / index mgmt / ranking / matching  │
         └───────────────────────────────────────────────────┘
-        検索インデックス (本体DBとは別ファイル)
+        Search index (a separate file from the primary store)
 ```
 
-なぜ「本体DBに同居させず、独立したインデックスを持つ」のか。本体DBに検索用の
-列やテーブルを足すと、SwiftData / Room それぞれが行うスキーマ検証やクラウド同期と
-干渉し、本来壊れてはならない「正のデータ」の整合性を脅かしうる。検索は本質的に
-「いつでも作り直せる派生物」なので、正のデータから物理的に切り離し、壊れても
-再構築すれば済む位置に置く。
+There are two reasons for not co-locating the search index with the primary
+store. First, adding search-specific columns or tables to the primary store may
+interfere with the schema validation or cloud synchronization that store
+performs (SwiftData and Room being typical cases), potentially compromising the
+integrity of the source-of-truth data. Second, the search index is derived data
+that can be reconstructed from the source of truth, and its availability and
+integrity requirements differ from those of the primary store. The two are
+therefore kept as separate files.
 
-### 1.2 設計上の重要決定
+### 1.2 Key design decisions
 
-| 決定事項 | 内容 | 理由 |
+| Decision | Description | Rationale |
 |---|---|---|
-| 実装の単一化 | 検索ロジックを Rust に1実装だけ置き、各言語へ自動バインディング | アルゴリズム一致を「努力目標」ではなく**構造的に保証**する |
-| インデックス独立 | 検索インデックスを本体DBと別に持つ | 本体DBの整合性チェック・クラウド連携を壊さない。検索は作り直せる派生物として扱う |
-| ID のみ返却 | 検索結果は安定キー(ID)とスコアだけを返し、本体は各OSで再フェッチ | エンジンが本体DBの実装に結合しない・移植性を保つ |
-| 挙動はバインディングが選ぶ | 正規化と検索戦略の**組み合わせ**をホスト側で指定する | 用途ごとに最適な挙動を選びつつ、実装はコアに一元化したまま |
-| 既定は正規化による畳み込み | 曖昧さは原則「正規化で軸を畳む」ことで作る。近似マッチは**選べる戦略**として併設 | 単純な一致がそのまま曖昧検索になり高速・決定的。タイポ許容など別軸の曖昧さは戦略として明示的に選ぶ |
-| ランタイムを同梱する | 正規化処理や検索基盤の実体をOS任せにせず、コアに焼き込む | 端末・OS バージョン差で結果がぶれない(後述の構造的一致保証) |
+| Single implementation | Place the search logic in exactly one Rust implementation and auto-generate bindings for each language | Guarantee algorithmic consistency **structurally** rather than by operational discipline |
+| Independent index | Keep the search index separate from the primary store | Avoid interfering with the primary store's integrity checks and cloud integration; treat search as reconstructible derived data |
+| Return IDs only | Search results return only a stable key (ID) and a score; the host re-fetches records per OS | The engine does not couple to the primary store's implementation, preserving portability |
+| Behaviour selected by the binding | The **combination** of normalization and search strategy is specified host-side | Select behaviour per use case while keeping the implementation centralized in the core |
+| Folding via normalization by default | Fuzziness is, in principle, realized by folding axes through normalization; approximate matching is offered as a selectable strategy | Plain matching functions as fuzzy search, fast and deterministically; other kinds of fuzziness, such as typo tolerance, are selected explicitly as strategies |
+| Bundled runtime | The implementations of normalization and the search substrate are included in the core rather than relying on the OS | Eliminate result differences caused by device or OS version differences (see the structural-consistency guarantee below) |
 
-### 1.3 データフロー
+### 1.3 Data flow
 
-- **書き込み**: 本体DBへ保存 → 正規化前の**生テキスト**を `index(id, text)` でエンジンに渡す(正規化はエンジン内部で実行)
-- **検索**: `search(query, limit)` に生入力を渡す → エンジンが**同じ正規化**を通してインデックスを引く → `(id, score)` を返す → 本体DBからIDで再フェッチ
-- **削除**: 本体から削除 → `remove(id)`
+- **Write**: after storing in the primary store, pass the pre-normalization raw text to the engine via `index(id, text)` (normalization is performed inside the engine).
+- **Search**: pass raw input to `search(query, limit)`. The engine applies the same normalization, consults the index, and returns `(id, score)`. Records are re-fetched from the primary store by ID.
+- **Delete**: after deleting from the primary store, call `remove(id)`.
 
-ホストは一貫して「正規化前の生の文字列」だけを渡す。正規化という曖昧さの心臓部を
-ホストに一切露出させないことが、後述の一致保証の前提になる。
+The host always passes only pre-normalization strings. Not exposing the
+normalization process to the host side is the precondition for the
+cross-platform consistency described later.
 
 ---
 
-## 2. 正規化の思想(検索エンジンの心臓部)
+## 2. Design rationale for normalization
 
-正規化とは「表記が違っても同じものとして扱いたい文字列を、共通のキーに寄せる」
-処理である。検索の曖昧さの大半はここで決まる。本エンジンの正規化思想は、当初の
-「唯一の固定された曖昧化処理」から、**「畳み込む軸を選べる、合成可能なモデル」**へ
-発展している。
+Normalization maps strings of differing representation onto a common key, and
+governs most of the fuzziness in search. The engine's normalization approach has
+been changed from a single fixed process to a composable model in which the axes
+to fold can be selected.
 
-### 2.1 正規化を「独立した軸の合成」として捉える
+### 2.1 Treating normalization as a composition of independent axes
 
-曖昧さには複数の独立した軸がある — 大文字小文字、全角半角、かな種別、長音、
-繰り返し記号、ダッシュ類、桁区切り、空白の揺れ、など。従来の設計はこれらを
-ひとつの固定処理に束ねていたが、現在は**それぞれを独立した畳み込みステップ**と
-みなす。
+Fuzziness has multiple independent axes: letter case, full-width / half-width,
+kana type, prolonged sound marks, iteration marks, the dash family, digit
+grouping, whitespace variation, and so on. The earlier design bundled these into
+a single fixed process; the current design treats each axis as an independent
+folding step.
 
-この捉え方が重要なのは、**「どこまで曖昧にするか」は用途で変わる**からだ。ある
-アプリは全角半角だけ揃えれば十分かもしれないし、別のアプリはかな種別や長音まで
-吸収したいかもしれない。軸を分解しておけば、要件に応じて曖昧さの強さを連続的に
-選べる。束ねたままでは「全部」か「なし」しか選べない。
+The basis for separating the axes is that the required range of fuzziness
+differs by use case. For some uses, unifying full-width / half-width is
+sufficient; others should also absorb kana type or prolonged sound marks.
+Treating each axis independently allows the strength of fuzziness to be selected
+according to requirements, whereas bundling into a single process permits only
+an on/off choice.
 
-### 2.2 不変の土台と、その上に重ねる選択
+### 2.2 A two-layer structure of base process and optional axes
 
-正規化には、**常に適用する不変の土台**と、**任意に重ねる軸**という二層構造を置く。
+Normalization consists of two layers: a base process that is always applied, and
+axes that are added optionally.
 
-- **土台(常時適用)**: 全角半角や互換文字の揺れを正準形へ寄せる、最も基礎的な
-  Unicode 正規化。これは「同じ文字の表記揺れ」を直すものであり、曖昧化というより
-  前提整備に近い。どんな構成でも必ず通す。
-- **重ねる軸(選択)**: 小文字化、かな種別の統一、長音の畳み込み、繰り返し記号の
-  展開、ダッシュ類の統一、桁区切りの除去、空白の圧縮、Latin系アクセント記号の除去
-  など。これらはホストが要件に応じてオン/オフする。
+- **Base process (always applied)**: a foundational Unicode normalization that
+  unifies full-width / half-width and compatibility-character variants into a
+  canonical form. This corresponds to disambiguation of representation rather
+  than fuzzing, and is applied in every configuration.
+- **Optional axes (selected)**: lowercasing, unification of kana type, folding
+  of prolonged sound marks, expansion of iteration marks, unification of the
+  dash family, removal of digit grouping, collapsing of whitespace, removal of
+  Latin diacritics, and so on. The host enables or disables these per
+  requirement.
 
-選んだ軸は**常に固定された正準順序で適用する**。順序を固定するのは、同じ軸の集合が
-常に同じ結果を生む(決定的である)ことを保証し、ひいては iOS と Android で寸分違わぬ
-キーになることを保証するためだ。「どの軸を選んだか」だけが挙動を決め、「どの順で
-書いたか」は影響しない、という性質を意図的に作っている。
+The selected axes are applied in a fixed canonical order. The purpose of fixing
+the order is to guarantee that the same set of axes always produces the same
+result (determinism), and thereby to guarantee that iOS and Android obtain
+identical keys. As a result, behaviour depends only on the set of selected axes,
+not on the order in which they are specified.
 
-### 2.3 名前付きプリセットは「便宜上の別名」
+### 2.3 The role of named presets
 
-よく使う軸の組み合わせには名前を付けてあるが、これは**実体ではなく便宜**である。
-たとえば既定のプリセットは「大文字小文字・全角半角・かな種別を畳む」もので、もう
-一方は「かな種別は区別する(=その軸だけ外した)」ものだ。プリセットは合成モデルの
-特定の一点を指す近道にすぎず、より細かく軸を指定する道も常に開いている。
+Frequently used combinations of axes are given names, but these are aliases for
+particular configurations within the composable model, not independent
+mechanisms. The default preset folds letter case, full-width / half-width, and
+kana type; the other excludes the kana-type axis. Specifying individual axes
+without using a preset is also possible.
 
-既定のプリセットの畳み込みを具体例で示すと:
+An example of folding under the default preset:
 
 ```
-ガ / が / ｶﾞ      → が     (全半角・かな種別は畳むが、濁点は区別)
-カ / か / ｶ       → か     (濁点ありとは別キー)
+ガ / が / ｶﾞ      → が     (width and kana type fold; voiced mark is kept distinct)
+カ / か / ｶ       → か     (a different key from the voiced form)
 パ / ぱ / ﾊﾟ      → ぱ
 Ｐ / P / ｐ / p   → p
 ヴ / ｳﾞ           → ゔ
 ```
 
-### 2.4 濁点を区別するという判断
+### 2.4 Keeping voiced and semi-voiced marks distinct
 
-本エンジンは既定で **濁点・半濁点を区別する**(`か` と `が` を別物として扱う)。
-これは日本語検索で「が」と「か」を同一視すると意味的に過剰な曖昧化になる、という
-判断に基づく。
+By default the engine keeps voiced and semi-voiced marks (dakuten / handakuten)
+distinct (`か` and `が` are treated as different). This follows from the
+judgment that treating "が" and "か" as identical would be excessive fuzzing in
+Japanese search.
 
-重要なのは、この区別が**土台に採る正規化形の選び方**から自然に導かれている点だ。
-全角半角を畳むには互換等価の正規化が要るが、その際に**合成形(結合済みの単一文字)を
-選ぶ**ことで、濁点は1文字のまま安定し、区別が保たれる。逆に**分解形**を選ぶと濁点が
-独立した結合文字に割れてしまい、「濁点を区別したい」のにキーが不安定になる。
-詳しい背景は付録A・Bを参照。
+This distinction derives from the choice of normalization form for the base
+process. Unifying full-width / half-width requires a compatibility-equivalent
+normalization; by adopting the composed form (a single combined character) in
+that step, the voiced mark is retained as a single character and the distinction
+is preserved. If the decomposed form were adopted, the voiced mark would be
+separated into an independent combining character, destabilizing the key against
+the goal of preserving the distinction. See appendices A and B for details.
 
-なお濁点の区別は今や「ハードコードされた絶対則」ではなく、**どの軸を選んだかの
-帰結**である。既定の軸集合には濁点を畳むステップが含まれないため区別される、という
-位置づけだ。一方 Latin 系のアクセント記号(café→cafe など)を畳む軸は別に用意して
-あり、日本語の濁点とは独立に制御できる。
+The distinction is not a fixed rule but a consequence of the selected set of
+axes. The default set contains no step that folds voiced marks, so they are
+distinguished as a result. A separate axis for folding Latin diacritics
+(café → cafe, etc.) is available, and can be controlled independently of the
+Japanese voiced marks.
 
-### 2.5 正規化はインデックスの「身元」の一部
+### 2.5 The correspondence between normalization and the index
 
-正規化が可変になったことで、新たな思想的支柱が一つ加わった —
-**「インデックスは、どの正規化で作られたかと不可分である」**。
+Because normalization has become variable, a constraint arises: an index is
+inseparable from the normalization used to generate it.
 
-`index` 時と `search` 時に**異なる正規化**を通せば、同じ文字列が別のキーになり、
-検索は静かに誤った結果を返す。これは最も避けたい失敗だ。そこでエンジンは、
-インデックスを作った正規化の「指紋」を内部に刻み込み、**異なる正規化で開こうと
-したら黙って間違えるのではなく、明示的に不整合を知らせる**。
-
-ここには「**サイレントな誤りより、ラウドな失敗**」という一貫した価値観がある。
-検索結果が静かにずれる事故は発見が難しい。ならば不整合の瞬間に止める方が、
-運用上はるかに安全だ、という思想である。
-
----
-
-## 3. 検索戦略の思想
-
-正規化が「何を同じ文字列とみなすか」を決めるのに対し、検索戦略は「正規化済みの
-クエリと本文をどう突き合わせるか」を決める。本エンジンはこの突き合わせ方も
-**差し替え可能**にしている。
-
-### 3.1 既定は「辞書非依存・ランキング付き」の全文検索
-
-既定の戦略は、文字を3文字単位に機械分割する手法で索引を作り、語の頻度と文書長を
-加味した定番の関連度指標で並べ替える。この選択の背後には二つの判断がある。
-
-- **辞書を引かない**こと。形態素解析のような辞書依存の分割は精度が高い反面、
-  辞書の中身が環境ごとに違えば結果がぶれる。3文字分割は辞書を一切引かないため、
-  空白で区切らない日本語でも部分一致が成立し、かつ**プラットフォーム非依存**を保てる。
-- **順位を付けられる**こと。単に「ヒットした集合」ではなく「関連度順」を返せるので、
-  汎用の全文検索としてそのまま使える。
-
-### 3.2 「最適な突き合わせ方は用途で違う」から戦略を選べる
-
-汎用のランキング検索が常に最善とは限らない。前方一致はサジェスト/オートコンプリート
-に向くし、後方一致は拡張子や敬称の検索に向く。語順を問わない複数語検索、タイプミスを
-許す近似検索(編集距離や文字集合の類似度に基づくもの)も、それぞれ別の場面で要る。
-
-本エンジンはこれらを**すべてコアに実装**したうえで、**選択だけをバインディングに
-委ねる**。ここでも思想は一貫している — 挙動の選択肢はホストに開くが、その実体は
-1コアに集約し、どれを選んでも両OSで一致させる。
-
-近似マッチ(タイポ許容)を「正規化では吸収しない別軸の曖昧さ」として、正規化とは
-切り離した**戦略側の関心事**に置いているのも意図的だ。正規化は決定的な畳み込みに
-徹し、確率的・距離的な曖昧さは戦略として明示的に選ぶ、という役割分担になっている。
-
-### 3.3 短いクエリへの配慮
-
-3文字単位の索引は、原理上3文字に満たないクエリを索引で引けない。しかし日本語は
-1〜2文字のクエリが日常的に発生する。そこで短すぎるクエリは素朴な部分一致へ自動的に
-切り替える。「索引の制約をユーザーに転嫁しない」という運用思想の表れである。
+Applying different normalizations at index time and at search time maps the same
+string to different keys, producing incorrect search results. Such errors are
+difficult to detect. The engine therefore retains an identifier of the
+normalization used to generate the index, and explicitly reports a mismatch if
+the index is opened under a different normalization. This rests on the judgment
+that stopping at the point of mismatch is operationally safer than returning
+incorrect results.
 
 ---
 
-## 4. インデックスのライフサイクルと再生成の思想
+## 3. Design rationale for the search strategy
 
-### 4.1 生テキストを保持し、いつでも作り直せるようにする
+Whereas normalization governs the criterion by which two strings are considered
+identical, the search strategy governs the method by which the normalized query
+is matched against the text. The engine makes this matching method
+interchangeable as well.
 
-正規化方針は将来変わりうる — 新しい軸を足したくなる、既定を変えたくなる、といった
-ことは起こる。そのとき、ホストに全文書の再投入を強いるのは設計の敗北だ。
+### 3.1 Default strategy — dictionary-free, rankable full-text search
 
-そこでエンジンは、各文書の**正規化前の生テキスト**を正規化済みの形と一緒に保持する。
-こうしておけば、正規化方針が変わっても**エンジン単独で全文書を再正規化し、索引を
-その場で作り直せる**。ホストは何もしなくてよい。
+The default strategy builds the index by splitting characters into three-
+character units, and orders results by a relevance measure that accounts for
+term frequency and document length. There are two reasons for this choice.
 
-これは「正規化はいつでも変えうる」という前提に正面から立った設計であり、当初
-「正規化済みだけを保管する(再構築時は再投入が必要)」としていた方針からの明確な
-転換である。再生成は、明示的に指示することも、開いた時に指紋の食い違いを検知して
-自動で行うこともできる。
+- **It is dictionary-free.** Dictionary-dependent segmentation, such as
+  morphological analysis, is highly accurate, but results differ when the
+  dictionary contents differ across environments. Three-character splitting uses
+  no dictionary, so substring matching holds even for Japanese, which is not
+  written with spaces, while preserving platform independence.
+- **It supports ranking.** It returns results ordered by relevance rather than
+  merely a match set, so it can serve as a general-purpose full-text search.
 
-### 4.2 本体DBとの同期
+### 3.2 Selecting a strategy by use case
 
-検索インデックスは本体DBの派生物なので、本体の変更をインデックスへ反映する仕組みが要る。
+General-purpose ranked search is not always optimal. Prefix matching suits
+suggestion / autocompletion; suffix matching suits searching extensions or
+honorific suffixes. Multi-word search insensitive to word order, and approximate
+search based on edit distance or character-set similarity, are each required in
+different use cases.
 
-- **iOS**: SwiftData の永続的履歴トラッキングで、前回以降の挿入/更新/削除の差分を
-  引いて反映する。削除済みレコードの情報も拾える設定にしておくと、`remove(id)` 連携が
-  きれいに書ける。
-- **Android**: Room の変更監視機構、あるいは変更ログを溜める方式で変更を捕捉する。
-- オフライン編集が絡むなら、本体側に「未同期」フラグを持たせて遅延同期する。
+The engine implements all of these in the core and delegates only the selection
+to the binding. As with normalization, the choices are opened to the host while
+the implementation is centralized in the core, so that any selection matches on
+both platforms.
 
-**ID の持ち方**にも思想がある。本体DBの内部識別子(`PersistentIdentifier` や rowid)に
-直接結合させず、アプリが振る安定キー(UUID 等)をエンジンの ID に使う。こうすると
-インデックスが本体DBの実装から独立し、移植性が保てる。
+Approximate matching (typo tolerance) is separated as a concern of the strategy
+side, as a kind of fuzziness not absorbed by normalization. Normalization
+handles deterministic folding, while distance-based fuzziness is selected as a
+strategy — a division of roles.
 
----
+### 3.3 Handling short queries
 
-## 5. クロスプラットフォーム一致を「構造的に」保証する原則
-
-本設計の核心は、「iOS と Android で挙動を揃える」を**規律ではなく構造**で担保する
-点にある。人間が気をつけて揃えるのではなく、揃わない作り方を物理的に不可能にする。
-
-1. **OS 内蔵の言語処理に依存しない**。各OSが備える文字変換やトークナイズは、内部で
-   使う国際化ライブラリのバージョンがOSごとに違い、結果がずれうる。本エンジンは
-   正規化処理の実体を自前で**コアに焼き込む**ため、結果がビルド時点で固定される。
-2. **検索基盤のランタイムも同梱する**。OS同梱の検索基盤はバージョンが端末ごとに違い、
-   利用できる機能にも差がある。同一バージョンをコアに同梱して挙動を固定する。
-3. **辞書非依存の処理だけで土台を組む**。正規化も既定の索引化も辞書を引かない決定的
-   処理にしてある。辞書依存の機能(後述の読み検索など)を入れる場合は、辞書ごとコアに
-   同梱してバージョンを固定し、OS の機能は使わない。
-4. **共有の振る舞い仕様(spec)で担保する**。「入力 → 期待する正規化結果 / 期待する
-   ヒットID」を言語非依存の共有ファイルに書き、全OSのCIが同一ファイルを検証する。
-   コアがずれれば、すべてのプラットフォームが**同じケースで同時に**失敗するので、
-   片方だけ静かにずれる事故に気づける。
-
-そして全体を貫くのが、**実装を物理的に1つにする**という最上位の原則だ。バインディングが
-自動生成される以上、Swift と Kotlin が別実装になりようがない。一致は「努力した結果」
-ではなく「構造上の必然」になる。
+A three-character-unit index cannot, in principle, retrieve queries shorter than
+three characters. In Japanese, however, one- and two-character queries occur
+frequently. Queries shorter than three characters are therefore switched
+automatically to substring matching. This is a measure to avoid passing the
+constraint of the indexing scheme on to the user.
 
 ---
 
-## 6. 今後の拡張ポイント
+## 4. Index lifecycle and regeneration
 
-- **読み(よみがな)検索**: 漢字を読みで引きたい場合。辞書依存になるため、OS の読み付与
-  機能(各OSで辞書が異なり一致しない)は使わず、形態素解析器と固定辞書をコアに同梱して
-  両OS一致のまま実現する、という方針を採る。
-- **セマンティック検索**: 埋め込みベクトル + 近似最近傍。同じコアに載せれば、正規化や
-  既存戦略と同じく一貫管理できる。
-- **二段ランキング**: ゆるく畳んだ正規化で広く拾い、より厳密な正規形に一致するものを
-  上位に押し上げる。再現率と適合率の両立。可変正規化と戦略の組み合わせという既存の
-  枠組みの延長で捉えられる。
+### 4.1 Regeneration by retaining raw text
+
+The normalization approach may change in the future (adding axes, changing the
+default configuration, and so on). A design that requires the host to re-feed
+all documents in that event is undesirable.
+
+The engine therefore retains each document's pre-normalization text alongside
+its normalized form. This allows the engine, even when the normalization
+approach changes, to re-normalize all documents and reconstruct the index on its
+own. No host-side operation is required.
+
+This is a change from the original approach, which retained only normalized text
+and required re-feeding at rebuild time. Regeneration can be triggered
+explicitly, or performed automatically upon detecting a normalization mismatch
+when the index is opened.
+
+### 4.2 Synchronization with the primary store
+
+Because the search index is data derived from the primary store, a mechanism is
+needed to reflect changes in the primary store into the index. The specific
+mechanism depends on the primary store adopted, but in every case the common
+point is to capture changes and re-index the affected records. The following are
+examples for representative stores.
+
+- **iOS (the SwiftData case)**: use persistent history tracking to obtain and
+  apply the inserted / updated / deleted differences since the previous point.
+  Configuring it to also retain information about deleted records makes
+  integration with `remove(id)` straightforward.
+- **Android (the Room case)**: capture changes with a change-observation
+  mechanism, or by accumulating a change log.
+- For any store, when offline editing is involved, keep an unsynced flag on the
+  primary side and synchronize lazily.
+
+The choice of ID given to the engine also involves a design consideration.
+Rather than coupling directly to the primary store's internal identifier (such
+as `PersistentIdentifier` or rowid), use a stable key assigned by the
+application (such as a UUID) as the ID. This keeps the index independent of the
+primary store's implementation and preserves portability.
 
 ---
 
-# 関連知識の解説
+## 5. Structural guarantee of cross-platform consistency
 
-設計判断の背景にある技術を、判断の根拠とともに解説する。
+This design guarantees consistency of behaviour between iOS and Android by
+structure rather than by operational discipline; that is, it adopts a
+configuration in which an implementation that fails to match cannot arise.
 
-## A. Unicode 正規化(NFC / NFD / NFKC / NFKD)
+1. **No dependence on OS-built-in language processing.** The character
+   transformation and tokenization built into each OS use internationalization
+   libraries whose versions differ by OS, and results may diverge. The engine
+   includes the implementation of normalization in the core, so results are
+   fixed at build time.
+2. **The search-substrate runtime is bundled.** An OS-bundled search substrate
+   varies in version by device and differs in available features. The same
+   version is bundled in the core to fix behaviour.
+3. **The foundation is built only from dictionary-free processing.**
+   Normalization and the default indexing are deterministic processes that use
+   no dictionary. When introducing a dictionary-dependent feature (such as the
+   reading-based search described below), the dictionary is bundled into the
+   core with its version fixed, and OS features are not used.
+4. **Verification by a shared behaviour specification (spec).** The expected
+   normalization result and expected hit IDs for given inputs are written in a
+   language-independent shared file, and every OS's CI verifies the same file.
+   When a difference arises in the core, all platforms fail on the same case
+   simultaneously, so a situation in which only one diverges can be detected.
 
-同じ「見た目の文字」が複数のコードポイント列で表現できるため、比較・検索の前に
-正規化して表現を一意化する必要がある。正規化形は2軸の組み合わせで4種類ある。
+The top-level principle underlying these is to keep the implementation single.
+Because the bindings are auto-generated, Swift and Kotlin cannot become
+different implementations, and consistency of behaviour is a structural
+consequence.
 
-| | 合成(Composed) | 分解(Decomposed) |
+---
+
+## 6. Future extension points
+
+- **Reading (yomigana) search**: a feature for retrieving kanji by their
+  reading. Because it is dictionary-dependent, OS reading-assignment features
+  (which use different dictionaries per OS and do not match) are not used;
+  instead, a morphological analyzer and a fixed dictionary are bundled into the
+  core to maintain consistency across both OSes.
+- **Semantic search**: search by embedding vectors and approximate nearest
+  neighbours. Implementing it in the same core allows consistent management, as
+  with normalization and the existing strategies.
+- **Two-stage ranking**: a method that retrieves candidates broadly with a
+  loosely folded normalization, then ranks those matching a stricter canonical
+  form higher. Aimed at balancing recall and precision, it is positioned as an
+  extension of the existing framework of variable normalization combined with
+  strategies.
+
+---
+
+# Background
+
+This section explains the technologies behind the design decisions, together
+with their justifications.
+
+## A. Unicode normalization (NFC / NFD / NFKC / NFKD)
+
+Because the same glyph may be expressed by multiple code-point sequences, the
+representation must be normalized to a unique form before comparison or search.
+Normalization forms are classified into four kinds by the combination of two
+axes.
+
+| | Composed | Decomposed |
 |---|---|---|
-| **正準等価**(見た目・意味が同一) | NFC | NFD |
-| **互換等価**(意味は同じだが体裁が違う) | NFKC | NFKD |
+| **Canonical equivalence** (same glyph and meaning) | NFC | NFD |
+| **Compatibility equivalence** (corresponding meaning, differing presentation) | NFKC | NFKD |
 
-- **正準(Canonical)**: `が`(単一文字)と `か`+濁点のような、本質的に同じ文字の
-  表現ゆれを統一する。
-- **互換(Compatibility, K)**: 全角 `Ａ` と半角 `A`、半角カナ `ｶ` と全角 `カ`、
-  丸数字 `①` と `1` のような「意味は対応するが体裁が異なる」文字を統一する。
-  **全半角の畳み込みはこの K が担う。**
-- **合成 vs 分解**: 合成は結合済みの単一文字へ寄せ、分解は基底文字 + 結合文字へ分ける。
+- **Canonical**: unifies representational differences of the same character,
+  such as `が` (a single character) and `か` + voiced mark.
+- **Compatibility (K)**: unifies characters whose meaning corresponds but whose
+  presentation differs, such as full-width `Ａ` and half-width `A`, half-width
+  kana `ｶ` and full-width `カ`, or the circled digit `①` and `1`. Folding of
+  full-width / half-width is handled by this K.
+- **Composed vs. decomposed**: composition unifies to a single combined
+  character; decomposition separates into a base character and combining
+  characters.
 
-### なぜ土台に NFKC を採るか
+### Rationale for adopting NFKC as the base process
 
-- 全半角を畳みたい → **K(互換)が必須**。NFC/NFD では半角カナが畳まれない。
-- 濁点は既定で**区別**したい → **合成(C)** を選ぶ。分解形(NFKD)だと `が` が
-  `か`+結合濁点に割れ、濁点を保持したいのにキーが不安定化する。NFKC なら `が` は
-  単一の合成文字のまま安定する。
+- Folding full-width / half-width requires compatibility (K). NFC / NFD do not
+  fold half-width kana.
+- Because voiced marks are kept distinct by default, the composed form (C) is
+  adopted. In the decomposed form (NFKD), `が` separates into `か` + a combining
+  voiced mark, destabilizing the key against the goal of preserving the voiced
+  mark. In NFKC, `が` is stable as a single combined character.
 
-> 補足: 「濁点も曖昧にしたい」要件なら、分解してから結合濁点/半濁点を除去する手も
-> ある。本エンジンは既定で濁点を区別するため、その除去は行わない(必要なら畳み込みの
-> 一軸として足せる)。
+> Note: if the requirement were to also fuzz voiced marks, one approach is to
+> decompose and then remove the combining voiced / semi-voiced marks. Because
+> the engine keeps voiced marks distinct by default, this removal is not
+> performed (it can be added as a folding axis if needed).
 
-## B. 結合文字と濁点
+## B. Combining characters and voiced marks
 
-- **結合濁点 / 結合半濁点**は、前の文字に重ねて表示される結合文字で、単独表示用の
-  記号とは別物。
-- 半角の濁点 / 半濁点は、互換正規化で前の半角カナと合成され、全角の合成済み濁点付き
-  カナへ揃う(例: 半角の `ｶ`+`ﾞ` → `が`)。これにより半角入力の濁点も正しく1文字に
-  まとまる。
+- The combining voiced and semi-voiced marks are combining characters displayed
+  superimposed on the preceding character, at code points distinct from the
+  standalone-display symbols.
+- Half-width voiced and semi-voiced marks are composed, by compatibility
+  normalization, with the preceding half-width kana into a full-width composed
+  voiced kana (for example, half-width `ｶ` + `ﾞ` → `が`). This unifies voiced
+  marks of half-width input into a single character as well.
 
-## C. 全文検索と trigram(3文字分割)トークナイズ
+## C. Full-text search and trigram (three-character split) tokenization
 
-- **トークナイザの選択が日本語の鍵**:
-  - 空白区切り前提のトークナイザは、分かち書きしない**日本語ではほぼ機能しない**。
-  - **3文字分割(trigram)**: 文字を3文字単位に機械分割する。空白のない日本語でも
-    部分一致が成立し、辞書を一切引かないので**プラットフォーム非依存**(両OS一致に最適)。
-  - 形態素解析(辞書依存): 単語境界で正確に分割でき精度は最高だが、辞書同梱が必要で重く、
-    辞書差が一致を脅かす。
-- **3文字分割の制約**: 3文字未満のクエリはマッチ不可。→ 本設計では素朴な部分一致への
-  フォールバックで補う。
-- **関連度指標**: 語の頻度と文書長を加味した定番のスコアで並べ替える。
+- **The choice of tokenizer is the crux of Japanese processing.**
+  - A tokenizer that assumes whitespace separation hardly functions for
+    Japanese, which is not space-segmented.
+  - **Three-character split (trigram)**: splits characters into three-character
+    units. Substring matching holds even for Japanese without spaces, and
+    because it uses no dictionary it is platform-independent.
+  - Morphological analysis (dictionary-dependent): segments precisely at word
+    boundaries and is the most accurate, but requires bundling a dictionary,
+    is heavy, and the dictionary differences threaten consistency.
+- **Constraint of three-character split**: queries shorter than three characters
+  cannot be retrieved, so this design compensates with a fallback to substring
+  matching.
+- **Relevance measure**: orders results by a measure that accounts for term
+  frequency and document length.
 
-## D. 言語間バインディングの自動生成(UniFFI)
+## D. Automatic generation of cross-language bindings (UniFFI)
 
-Rust で書いたロジックから、Swift / Kotlin など各言語向けのバインディングを自動生成
-する仕組み。**実装が1つ**になるため、クロスプラットフォームのアルゴリズム一致を
-構造的に保証できる。値オブジェクト・メソッドを持つクラス・例外型・公開関数といった
-区別を保ったまま各言語の自然な形(Swift の struct / 例外、Kotlin の data class / 例外
-など)へ橋渡しされる。非同期処理も各言語の非同期機構へ対応づけられる。
+A mechanism that auto-generates bindings for languages such as Swift and Kotlin
+from logic written in Rust. Because the implementation is single, algorithmic
+consistency across platforms can be guaranteed structurally. The distinctions
+among value objects, classes with methods, error types, and exported functions
+are preserved while mapping to each language's idiomatic forms (Swift structs
+and exceptions, Kotlin data classes and exceptions, and so on). Asynchronous
+processing is likewise mapped to each language's asynchronous mechanism.
 
-ここで本書の出発点に戻る — 実装を1つに保ち、両OSが同じコードを別経路で踏むからこそ、
-正規化も検索も「揃える努力」ではなく「揃っているのが当たり前」になる。これが本設計の
-一貫した思想である。
+By keeping the implementation single and having both OSes operate through
+identical code, consistency of normalization and search is structurally
+guaranteed.
