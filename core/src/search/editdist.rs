@@ -107,11 +107,16 @@ pub fn word_fuzzy_search(
     let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
 
     let mut hits: Vec<Hit> = Vec::new();
+    let mut wchars: Vec<char> = Vec::new();
     for row in rows {
         let (id, norm) = row?;
         let best = norm
             .split_whitespace()
-            .filter_map(|w| dist(&qchars, &w.chars().collect::<Vec<char>>(), threshold))
+            .filter_map(|w| {
+                wchars.clear();
+                wchars.extend(w.chars());
+                dist(&qchars, &wchars, threshold)
+            })
             .min();
         if let Some(best) = best {
             hits.push(Hit {
