@@ -24,9 +24,14 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import uniffi.unfydqry.EngineOptionsConfig
 import uniffi.unfydqry.FieldValue
+import uniffi.unfydqry.NormalizeOptions
 import uniffi.unfydqry.SearchEngine
 import uniffi.unfydqry.SearchException
+import uniffi.unfydqry.SearchStrategy
+import uniffi.unfydqry.normalizeWithOptions
+import uniffi.unfydqry.reindexStatusWithOptions
 
 /**
  * Android side of the Flutter plugin.
@@ -60,6 +65,39 @@ class UnfydqryPlugin : FlutterPlugin, MethodCallHandler {
                     val handle = nextHandle++
                     engines[handle] = SearchEngine(dbPath)
                     result.success(handle)
+                }
+
+                "openWithOptions" -> {
+                    val dbPath = call.argument<String>("dbPath")
+                        ?: return result.badArgs("dbPath:String required")
+                    val config = call.engineConfig(result) ?: return
+                    val handle = nextHandle++
+                    engines[handle] = SearchEngine.withOptions(dbPath, config)
+                    result.success(handle)
+                }
+
+                "openWithOptionsRebuilding" -> {
+                    val dbPath = call.argument<String>("dbPath")
+                        ?: return result.badArgs("dbPath:String required")
+                    val config = call.engineConfig(result) ?: return
+                    val handle = nextHandle++
+                    engines[handle] = SearchEngine.withOptionsRebuilding(dbPath, config)
+                    result.success(handle)
+                }
+
+                "normalizeWithOptions" -> {
+                    val input = call.argument<String>("input")
+                        ?: return result.badArgs("input:String required")
+                    val options = call.normalizeOptions(result) ?: return
+                    result.success(normalizeWithOptions(input, options))
+                }
+
+                "reindexStatusWithOptions" -> {
+                    val dbPath = call.argument<String>("dbPath")
+                        ?: return result.badArgs("dbPath:String required")
+                    val options = call.normalizeOptions(result) ?: return
+                    // The Dart side maps these enum names back to ReindexStatus.
+                    result.success(reindexStatusWithOptions(dbPath, options).name)
                 }
 
                 "index" -> {
@@ -172,4 +210,38 @@ class UnfydqryPlugin : FlutterPlugin, MethodCallHandler {
     // Flutter's method channel can deliver Dart int as Int or Long depending on value;
     // returns null (rather than throwing) when the value is missing or not numeric.
     private fun MethodCall.longArg(key: String): Long? = (argument<Any>(key) as? Number)?.toLong()
+
+    /**
+     * Parses the `options` map (key → Boolean) into [NormalizeOptions], or sends a
+     * `BAD_ARGS` error and returns null. Missing flags default to `false`,
+     * matching the Dart [NormalizeOptions] defaults.
+     */
+    private fun MethodCall.normalizeOptions(result: Result): NormalizeOptions? {
+        val map = argument<Map<String, Any>>("options")
+            ?: run { result.badArgs("options:Map required"); return null }
+        fun flag(key: String) = map[key] as? Boolean ?: false
+        return NormalizeOptions(
+            lowercase = flag("lowercase"),
+            kanaFold = flag("kanaFold"),
+            foldDiacritics = flag("foldDiacritics"),
+            foldChoonpu = flag("foldChoonpu"),
+            expandIterationMarks = flag("expandIterationMarks"),
+            normalizeHyphens = flag("normalizeHyphens"),
+            stripDigitGrouping = flag("stripDigitGrouping"),
+            collapseWhitespace = flag("collapseWhitespace"),
+        )
+    }
+
+    /**
+     * Builds an [EngineOptionsConfig] from the call's `options` map and `strategy`
+     * string (the enum name), or sends a `BAD_ARGS` error and returns null.
+     */
+    private fun MethodCall.engineConfig(result: Result): EngineOptionsConfig? {
+        val options = normalizeOptions(result) ?: return null
+        val strategyName = argument<String>("strategy")
+            ?: return run { result.badArgs("strategy:String required"); null }
+        val strategy = runCatching { SearchStrategy.valueOf(strategyName) }.getOrNull()
+            ?: return run { result.badArgs("strategy: unknown value '$strategyName'"); null }
+        return EngineOptionsConfig(normalize = options, strategy = strategy)
+    }
 }

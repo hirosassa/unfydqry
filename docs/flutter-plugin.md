@@ -9,13 +9,13 @@
 
 ```
 flutter/
-├── lib/unfydqry.dart           public Dart API (SearchEngine, Hit, RecordHit, FieldValue, SearchException)
+├── lib/unfydqry.dart           public Dart API (SearchEngine, Hit, RecordHit, FieldValue, NormalizeOptions, SearchStrategy, ReindexStatus, SearchException)
 ├── ios/
 │   └── Classes/UnfydqryPlugin.swift   Swift plugin → UnifiedQuery.SearchEngine
 ├── android/
 │   ├── build.gradle.kts
 │   └── src/main/kotlin/unfydqry/flutter/UnfydqryPlugin.kt
-├── test/unfydqry_test.dart     13 mock-channel Dart unit tests
+├── test/unfydqry_test.dart     mock-channel Dart unit tests
 ├── example/                    Flutter sample app (same 8-record seed)
 └── pubspec.yaml
 ```
@@ -73,6 +73,36 @@ final repacked = await engine.changeFieldBits(10);
 or 8 for a fresh one). `RecordHit` carries `recordId`, `score`, and
 `matchedSlots`.
 
+### Normalization options and search strategy
+
+Open with an explicit normalization profile (`NormalizeOptions`) and query
+algorithm (`SearchStrategy`), preview how text normalizes, and detect when the
+stored index no longer matches the chosen options. This mirrors the iOS/Android
+sample settings UI.
+
+```dart
+// Open applying a profile + strategy. The *Rebuilding variant regenerates the
+// stored documents in place if a previous run used different options.
+final engine = await SearchEngine.openWithOptionsRebuilding(
+  dbPath,
+  options: const NormalizeOptions.loose(),   // lowercase + kana fold
+  strategy: SearchStrategy.trigramBm25,
+);
+
+// Switching strategy is cheap — it is not part of the index fingerprint.
+final engine2 = await SearchEngine.openWithOptions(dbPath,
+    options: const NormalizeOptions.loose(), strategy: SearchStrategy.substring);
+
+// Preview the normalized form a query/document would be indexed under.
+final normalized = await SearchEngine.normalize('ＰＹＴＨＯＮ',
+    options: const NormalizeOptions.loose());  // → 'ｐｙｔｈｏｎ'
+
+// Does the stored index need regenerating for these options?
+final status = await SearchEngine.reindexStatus(dbPath,
+    options: const NormalizeOptions(lowercase: true, kanaFold: true, foldChoonpu: true));
+// → ReindexStatus.configChanged  (then reopen via openWithOptionsRebuilding)
+```
+
 ## Install
 
 The plugin is **not** published to pub.dev — it lives in-tree under `flutter/`
@@ -104,6 +134,10 @@ Channel name: **`unfydqry/search`**
 | Method | Arguments | Return |
 |---|---|---|
 | `open` | `dbPath: String` | `int` handle |
+| `openWithOptions` | `dbPath: String, options: Map<String, bool>, strategy: String` | `int` handle |
+| `openWithOptionsRebuilding` | `dbPath: String, options: Map<String, bool>, strategy: String` | `int` handle |
+| `normalizeWithOptions` | `input: String, options: Map<String, bool>` | `String` |
+| `reindexStatusWithOptions` | `dbPath: String, options: Map<String, bool>` | `String` (`EMPTY` / `UP_TO_DATE` / `CONFIG_CHANGED`) |
 | `index` | `handle: int, id: int, text: String` | — |
 | `remove` | `handle: int, id: int` | — |
 | `search` | `handle: int, query: String, limit: int` | `List<Map<String, dynamic>>` |
