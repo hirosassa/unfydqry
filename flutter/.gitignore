@@ -16,9 +16,13 @@ pubspec.lock
 # Build outputs
 build/
 
-# iOS native artifact copied into the pod root by the build step (strategy A).
-# Built from <repo>/ios/UnifiedQuery.xcframework; see docs/flutter-plugin.md.
-ios/UnifiedQuery.xcframework
+# iOS native artifacts vendored into the SPM plugin package by the build step.
+# Refreshed from the canonical sources under <repo>/ios; see docs/flutter-plugin.md.
+ios/unfydqry/UnifiedQuery.xcframework
+ios/unfydqry/Sources/unfydqry/UnifiedQueryBinding.swift
+
+# SwiftPM build artifacts for the plugin package
+ios/unfydqry/.build/
 
 # Example app — platform dirs are flutter-generated; only lib/ is source
 example/.dart_tool/
