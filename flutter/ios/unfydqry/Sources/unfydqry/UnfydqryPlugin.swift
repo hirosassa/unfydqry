@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
-import UnifiedQuery
+// The generated UniFFI binding (SearchEngine, NormalizeOptions, …) is compiled
+// into this same module from UnifiedQueryBinding.swift, so no import is needed.
 
 /// iOS side of the Flutter plugin.
 ///
@@ -42,6 +43,43 @@ public class UnfydqryPlugin: NSObject, FlutterPlugin {
                 nextHandle += 1
                 engines[handle] = engine
                 result(handle)
+
+            case "openWithOptions":
+                guard let dbPath = args["dbPath"] as? String else {
+                    return result(badArgs("dbPath:String required"))
+                }
+                guard let config = engineConfig(args, result: result) else { return }
+                let engine = try SearchEngine.withOptions(dbPath: dbPath, config: config)
+                let handle = nextHandle
+                nextHandle += 1
+                engines[handle] = engine
+                result(handle)
+
+            case "openWithOptionsRebuilding":
+                guard let dbPath = args["dbPath"] as? String else {
+                    return result(badArgs("dbPath:String required"))
+                }
+                guard let config = engineConfig(args, result: result) else { return }
+                let engine = try SearchEngine.withOptionsRebuilding(dbPath: dbPath, config: config)
+                let handle = nextHandle
+                nextHandle += 1
+                engines[handle] = engine
+                result(handle)
+
+            case "normalizeWithOptions":
+                guard let input = args["input"] as? String else {
+                    return result(badArgs("input:String required"))
+                }
+                guard let options = normalizeOptions(args, result: result) else { return }
+                result(normalizeWithOptions(input: input, options: options))
+
+            case "reindexStatusWithOptions":
+                guard let dbPath = args["dbPath"] as? String else {
+                    return result(badArgs("dbPath:String required"))
+                }
+                guard let options = normalizeOptions(args, result: result) else { return }
+                // The Dart side maps these wire names back to ReindexStatus.
+                result(wireName(try reindexStatusWithOptions(dbPath: dbPath, options: options)))
 
             case "index":
                 guard let id = int64(args["id"]) else { return result(badArgs("id:Int required")) }
@@ -134,6 +172,68 @@ public class UnfydqryPlugin: NSObject, FlutterPlugin {
 
     private func badArgs(_ message: String) -> FlutterError {
         FlutterError(code: "BAD_ARGS", message: message, details: nil)
+    }
+
+    /// Parses the `options` map (key → Bool) into ``NormalizeOptions``, or sends a
+    /// `BAD_ARGS` error and returns nil. Missing flags default to `false`,
+    /// matching the Dart `NormalizeOptions` defaults.
+    private func normalizeOptions(_ args: [String: Any], result: @escaping FlutterResult) -> NormalizeOptions? {
+        guard let map = args["options"] as? [String: Any] else {
+            result(badArgs("options:Map required"))
+            return nil
+        }
+        func flag(_ key: String) -> Bool { (map[key] as? NSNumber)?.boolValue ?? false }
+        return NormalizeOptions(
+            lowercase: flag("lowercase"),
+            kanaFold: flag("kanaFold"),
+            foldDiacritics: flag("foldDiacritics"),
+            foldChoonpu: flag("foldChoonpu"),
+            expandIterationMarks: flag("expandIterationMarks"),
+            normalizeHyphens: flag("normalizeHyphens"),
+            stripDigitGrouping: flag("stripDigitGrouping"),
+            collapseWhitespace: flag("collapseWhitespace")
+        )
+    }
+
+    /// Builds an ``EngineOptionsConfig`` from the call's `options` map and
+    /// `strategy` wire name, or sends a `BAD_ARGS` error and returns nil.
+    private func engineConfig(_ args: [String: Any], result: @escaping FlutterResult) -> EngineOptionsConfig? {
+        guard let options = normalizeOptions(args, result: result) else { return nil }
+        guard let strategyName = args["strategy"] as? String else {
+            result(badArgs("strategy:String required"))
+            return nil
+        }
+        guard let strategy = searchStrategy(strategyName) else {
+            result(badArgs("strategy: unknown value '\(strategyName)'"))
+            return nil
+        }
+        return EngineOptionsConfig(normalize: options, strategy: strategy)
+    }
+
+    /// Maps a stable wire name (kept in sync with Dart `SearchStrategy.wireName`
+    /// and the Kotlin enum names) to the UniFFI ``SearchStrategy`` case.
+    private func searchStrategy(_ wire: String) -> SearchStrategy? {
+        switch wire {
+        case "TRIGRAM_BM25": return .trigramBm25
+        case "SUBSTRING": return .substring
+        case "PREFIX": return .prefix
+        case "SUFFIX": return .suffix
+        case "ALL_TERMS": return .allTerms
+        case "FUZZY_TRIGRAM": return .fuzzyTrigram
+        case "LEVENSHTEIN": return .levenshtein
+        case "DAMERAU_LEVENSHTEIN": return .damerauLevenshtein
+        default: return nil
+        }
+    }
+
+    /// Serializes ``ReindexStatus`` to its stable wire name (matches the Kotlin
+    /// enum names and Dart `ReindexStatus.wireName`).
+    private func wireName(_ status: ReindexStatus) -> String {
+        switch status {
+        case .empty: return "EMPTY"
+        case .upToDate: return "UP_TO_DATE"
+        case .configChanged: return "CONFIG_CHANGED"
+        }
     }
 
     // Flutter's standard message codec boxes numbers as NSNumber; returns nil

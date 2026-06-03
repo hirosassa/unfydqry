@@ -2,8 +2,11 @@ import 'package:flutter/services.dart';
 
 import 'field_value.dart';
 import 'hit.dart';
+import 'normalize_options.dart';
 import 'record_hit.dart';
+import 'reindex_status.dart';
 import 'search_exception.dart';
+import 'search_strategy.dart';
 
 /// Thin wrapper around the platform's SearchEngine.
 ///
@@ -34,6 +37,70 @@ class SearchEngine {
     final handle = await _channel.invokeMethod<int>('open', {'dbPath': dbPath});
     if (handle == null) throw const SearchException('open returned null handle');
     return SearchEngine._(handle);
+  }
+
+  /// Opens the index at [dbPath] applying [options] and [strategy].
+  ///
+  /// Throws if the stored index was built with different normalization
+  /// [options] (a config mismatch). Use [openWithOptionsRebuilding] to adopt
+  /// new options by regenerating the stored documents in place.
+  static Future<SearchEngine> openWithOptions(
+    String dbPath, {
+    NormalizeOptions options = const NormalizeOptions.loose(),
+    SearchStrategy strategy = SearchStrategy.trigramBm25,
+  }) async {
+    final handle = await _channel.invokeMethod<int>('openWithOptions', {
+      'dbPath': dbPath,
+      'options': options.toMap(),
+      'strategy': strategy.wireName,
+    });
+    if (handle == null) throw const SearchException('open returned null handle');
+    return SearchEngine._(handle);
+  }
+
+  /// Opens the index at [dbPath] with [options]/[strategy], regenerating the
+  /// stored documents in place if they were normalized under different options.
+  static Future<SearchEngine> openWithOptionsRebuilding(
+    String dbPath, {
+    NormalizeOptions options = const NormalizeOptions.loose(),
+    SearchStrategy strategy = SearchStrategy.trigramBm25,
+  }) async {
+    final handle =
+        await _channel.invokeMethod<int>('openWithOptionsRebuilding', {
+      'dbPath': dbPath,
+      'options': options.toMap(),
+      'strategy': strategy.wireName,
+    });
+    if (handle == null) throw const SearchException('open returned null handle');
+    return SearchEngine._(handle);
+  }
+
+  /// Normalizes [input] with [options], returning the transformed text the
+  /// engine would index and query against. Pure function — no open engine
+  /// needed; useful for previewing the effect of a normalization profile.
+  static Future<String> normalize(
+    String input, {
+    NormalizeOptions options = const NormalizeOptions.loose(),
+  }) async {
+    final out = await _channel.invokeMethod<String>('normalizeWithOptions', {
+      'input': input,
+      'options': options.toMap(),
+    });
+    return out ?? '';
+  }
+
+  /// Reports whether the index stored at [dbPath] is consistent with [options],
+  /// i.e. whether a reindex is needed before querying with those options.
+  static Future<ReindexStatus> reindexStatus(
+    String dbPath, {
+    NormalizeOptions options = const NormalizeOptions.loose(),
+  }) async {
+    final wire =
+        await _channel.invokeMethod<String>('reindexStatusWithOptions', {
+      'dbPath': dbPath,
+      'options': options.toMap(),
+    });
+    return ReindexStatus.fromWire(wire);
   }
 
   /// Indexes or re-indexes [text] under [id].

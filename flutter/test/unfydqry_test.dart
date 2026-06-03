@@ -18,6 +18,8 @@ void main() {
         log.add(call);
         switch (call.method) {
           case 'open':
+          case 'openWithOptions':
+          case 'openWithOptionsRebuilding':
             return nextHandle++;
           case 'index':
           case 'remove':
@@ -28,6 +30,10 @@ void main() {
               {'id': 1, 'score': -1.521},
               {'id': 7, 'score': -2.103},
             ];
+          case 'normalizeWithOptions':
+            return 'ｐｙｔｈｏｎ';
+          case 'reindexStatusWithOptions':
+            return 'CONFIG_CHANGED';
           default:
             return null;
         }
@@ -183,6 +189,109 @@ void main() {
 
       await a.dispose();
       await b.dispose();
+    });
+  });
+
+  group('NormalizeOptions', () {
+    test('loose preset folds case and kana only', () {
+      const o = NormalizeOptions.loose();
+      expect(o.lowercase, isTrue);
+      expect(o.kanaFold, isTrue);
+      expect(o.foldDiacritics, isFalse);
+      expect(o.collapseWhitespace, isFalse);
+    });
+
+    test('copyWith replaces only the given fields', () {
+      const o = NormalizeOptions.loose();
+      final n = o.copyWith(foldChoonpu: true);
+      expect(n.foldChoonpu, isTrue);
+      expect(n.lowercase, isTrue); // unchanged
+      expect(o.foldChoonpu, isFalse); // original untouched
+    });
+
+    test('toMap carries every flag under its wire key', () {
+      final map = const NormalizeOptions.loose().toMap();
+      expect(map['lowercase'], isTrue);
+      expect(map['kanaFold'], isTrue);
+      expect(map.keys, containsAll(<String>[
+        'lowercase',
+        'kanaFold',
+        'foldDiacritics',
+        'foldChoonpu',
+        'expandIterationMarks',
+        'normalizeHyphens',
+        'stripDigitGrouping',
+        'collapseWhitespace',
+      ]));
+    });
+  });
+
+  group('SearchEngine.openWithOptions', () {
+    test('forwards dbPath, options map, and strategy wire name', () async {
+      final engine = await SearchEngine.openWithOptions(
+        '/tmp/db.sqlite',
+        options: const NormalizeOptions.loose(),
+        strategy: SearchStrategy.substring,
+      );
+      final call = log.last;
+      expect(call.method, 'openWithOptions');
+      expect(call.arguments['dbPath'], '/tmp/db.sqlite');
+      expect(call.arguments['strategy'], 'SUBSTRING');
+      expect(call.arguments['options']['kanaFold'], isTrue);
+      await engine.dispose();
+    });
+
+    test('defaults to loose options and trigramBm25', () async {
+      final engine = await SearchEngine.openWithOptions('/tmp/db.sqlite');
+      expect(log.last.arguments['strategy'], 'TRIGRAM_BM25');
+      expect(log.last.arguments['options']['lowercase'], isTrue);
+      await engine.dispose();
+    });
+  });
+
+  group('SearchEngine.openWithOptionsRebuilding', () {
+    test('uses the openWithOptionsRebuilding channel method', () async {
+      final engine = await SearchEngine.openWithOptionsRebuilding(
+        '/tmp/db.sqlite',
+        strategy: SearchStrategy.fuzzyTrigram,
+      );
+      expect(log.last.method, 'openWithOptionsRebuilding');
+      expect(log.last.arguments['strategy'], 'FUZZY_TRIGRAM');
+      await engine.dispose();
+    });
+  });
+
+  group('SearchEngine.normalize', () {
+    test('forwards input and options, returns native string', () async {
+      final out = await SearchEngine.normalize(
+        'ＰＹＴＨＯＮ',
+        options: const NormalizeOptions.loose(),
+      );
+      final call = log.last;
+      expect(call.method, 'normalizeWithOptions');
+      expect(call.arguments['input'], 'ＰＹＴＨＯＮ');
+      expect(call.arguments['options']['lowercase'], isTrue);
+      expect(out, 'ｐｙｔｈｏｎ');
+    });
+  });
+
+  group('SearchEngine.reindexStatus', () {
+    test('maps the wire name back to a ReindexStatus', () async {
+      final status = await SearchEngine.reindexStatus('/tmp/db.sqlite');
+      expect(log.last.method, 'reindexStatusWithOptions');
+      expect(status, ReindexStatus.configChanged);
+    });
+  });
+
+  group('SearchStrategy', () {
+    test('round-trips through its wire name', () {
+      for (final s in SearchStrategy.values) {
+        expect(SearchStrategy.fromWire(s.wireName), s);
+      }
+    });
+
+    test('falls back to trigramBm25 for unknown wire names', () {
+      expect(SearchStrategy.fromWire('NOPE'), SearchStrategy.trigramBm25);
     });
   });
 }

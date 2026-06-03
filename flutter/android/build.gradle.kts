@@ -1,28 +1,40 @@
 plugins {
+    // AGP 9.0+ provides built-in Kotlin support, so the standalone
+    // org.jetbrains.kotlin.android plugin is no longer applied here.
     id("com.android.library")
-    id("org.jetbrains.kotlin.android")
 }
 
 android {
     namespace = "unfydqry.flutter"
-    compileSdk = 34
+    compileSdk = 36
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions { jvmTarget = "17" }
     defaultConfig { minSdk = 24 }
 
-    sourceSets["main"].apply {
-        // Re-use the generated UniFFI Kotlin binding from the Android module.
-        kotlin.srcDirs(
-            "src/main/kotlin",
-            "../../android/sample/unifiedquery/src/main/kotlin",
-        )
-        // Re-use the pre-built .so files from the Android module.
-        jniLibs.srcDirs("../../android/jniLibs")
+    // AGP 9 (built-in Kotlin) source-set DSL: configure "main" via sourceSets { named(...) }.
+    // The old `sourceSets["main"].kotlin` accessor throws a cast error under AGP 9.
+    sourceSets {
+        named("main") {
+            // Re-use the generated UniFFI Kotlin binding from the Android module.
+            kotlin.srcDirs(
+                "src/main/kotlin",
+                "../../android/sample/unifiedquery/src/main/kotlin",
+            )
+            // Re-use the pre-built .so files from the Android module.
+            jniLibs.srcDirs("../../android/jniLibs")
+        }
+    }
+}
+
+// AGP 9 dropped the android `kotlinOptions {}` DSL; configure the built-in
+// Kotlin compiler through the top-level `kotlin { compilerOptions { } }` block.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
