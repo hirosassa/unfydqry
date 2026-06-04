@@ -578,9 +578,11 @@ impl SearchEngine {
         if q.is_empty() {
             return Ok(None);
         }
+
+        // Fetch data under the lock, then release before doing Rust-side work.
         let conn = self.conn.lock().unwrap();
 
-        if self.strategy_kind == SearchStrategy::TrigramBm25 && q.chars().count() >= 3 {
+        if self.strategy_kind == SearchStrategy::TrigramBm25 && q.chars().nth(2).is_some() {
             // Use FTS5 highlight() for trigram_bm25 with 3+ char queries.
             let phrase = format!("\"{}\"", q.replace('"', "\"\""));
             let result: Option<String> = conn
@@ -590,15 +592,20 @@ impl SearchEngine {
                     |r| r.get(0),
                 )
                 .optional()?;
-            return Ok(result);
+            if result.is_some() {
+                return Ok(result);
+            }
+            // FTS5 MATCH returned no row — the doc may exist but the query
+            // didn't match. Fall through to return the plain normalized text.
         }
 
-        // Fallback: find the normalized text and highlight in Rust.
         let norm: Option<String> = conn
             .query_row("SELECT norm FROM entries WHERE id = ?1", params![id], |r| {
                 r.get(0)
             })
             .optional()?;
+        drop(conn); // Release the lock before Rust-side string work.
+
         let Some(norm) = norm else {
             return Ok(None);
         };
@@ -1587,6 +1594,23 @@ mod tests {
             .highlight("abc".into(), 1, "[".into(), "]".into())
             .unwrap();
         assert_eq!(result, Some("[abc][abc]".into()));
+    }
+
+    #[test]
+    fn highlight_trigram_bm25_no_match_returns_plain_text() {
+        let e = engine_with(SearchStrategy::TrigramBm25);
+        e.index(1, "東京都の情報検索プログラム".into()).unwrap();
+
+        // Query exists in the index but does not match this document.
+        let result = e
+            .highlight("zzzzzzz".into(), 1, "[".into(), "]".into())
+            .unwrap();
+        // Doc exists, so we get Some with the plain normalized text (no markers).
+        assert!(result.is_some());
+        assert!(
+            !result.as_ref().unwrap().contains('['),
+            "no markers expected when query doesn't match"
+        );
     }
 
     #[test]
