@@ -549,6 +549,17 @@ impl SearchEngine {
         Ok(count)
     }
 
+    /// Returns whether a document with the given `id` exists in the index.
+    pub fn contains(&self, id: i64) -> Result<bool, SearchError> {
+        let conn = self.conn.lock().unwrap();
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM entries WHERE id = ?1)",
+            params![id],
+            |r| r.get(0),
+        )?;
+        Ok(exists)
+    }
+
     /// Searches the index and returns at most `limit` hits.
     ///
     /// The `query` is normalized with the engine's profile and then matched
@@ -2071,5 +2082,37 @@ mod tests {
         let hits = e.search("world".into(), 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, 1);
+    }
+
+    // --- contains ---
+
+    #[test]
+    fn contains_returns_true_for_indexed_doc() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+        assert!(e.contains(1).unwrap());
+    }
+
+    #[test]
+    fn contains_returns_false_for_missing_id() {
+        let e = fresh();
+        assert!(!e.contains(999).unwrap());
+    }
+
+    #[test]
+    fn contains_returns_false_after_remove() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+        e.remove(1).unwrap();
+        assert!(!e.contains(1).unwrap());
+    }
+
+    #[test]
+    fn contains_works_with_record_layer() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "hello")]).unwrap();
+        let packed_id = 1i64 << e.field_bits();
+        assert!(e.contains(packed_id).unwrap());
+        assert!(!e.contains(packed_id + 1).unwrap());
     }
 }

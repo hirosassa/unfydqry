@@ -610,6 +610,11 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
     func changeFieldBits(newFieldBits: UInt8) throws  -> UInt64
     
     /**
+     * Returns whether a document with the given `id` exists in the index.
+     */
+    func contains(id: Int64) throws  -> Bool
+    
+    /**
      * Returns the total number of documents in the index.
      */
     func documentCount() throws  -> UInt64
@@ -880,6 +885,18 @@ open func changeFieldBits(newFieldBits: UInt8)throws  -> UInt64  {
     uniffi_unfydqry_fn_method_searchengine_change_field_bits(
             self.uniffiCloneHandle(),
         FfiConverterUInt8.lower(newFieldBits),$0
+    )
+})
+}
+    
+    /**
+     * Returns whether a document with the given `id` exists in the index.
+     */
+open func contains(id: Int64)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_contains(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(id),$0
     )
 })
 }
@@ -2320,6 +2337,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_change_field_bits() != 28105) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_method_searchengine_contains() != 16638) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_document_count() != 24388) {
