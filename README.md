@@ -234,7 +234,7 @@ Matching is performed on the normalized form (the same folding applied at index 
 ```swift
 // iOS
 let total = try engine.matchCount(query: "とうきょう")
-// → 42
+// → 42git 
 ```
 
 ```kotlin
