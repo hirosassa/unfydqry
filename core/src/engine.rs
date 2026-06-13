@@ -884,9 +884,11 @@ fn highlight_occurrences(haystack: &str, needle: &str, before: &str, after: &str
 /// character that expanded under normalization (e.g. `㍿` → `株式会社`), the
 /// marker snaps outward to that whole source character.
 ///
-/// Returns `raw` unchanged when `needle` does not occur. Cost is O(n²) in the
-/// length of `raw` (each prefix is re-normalized to locate range boundaries);
-/// host fields are short, so this stays cheap.
+/// Returns `raw` unchanged when `needle` does not occur. The character-boundary
+/// table requires one `normalize()` call per raw character up to the last match
+/// position (O(k) calls where k ≤ n = chars in raw; O(n) worst case when the
+/// match is near the end). Each match boundary is resolved via binary search
+/// in O(log n).
 fn highlight_raw(
     raw: &str,
     norm: &str,
@@ -906,43 +908,45 @@ fn highlight_raw(
         return raw.to_string();
     }
 
-    // For every char boundary in `raw`, the byte length of the normalization of
-    // that prefix. The pipeline only ever adds characters as the prefix grows,
-    // so this is non-decreasing — a `norm` offset maps to the enclosing `raw`
-    // boundary by a linear scan.
-    let mut bounds: Vec<(usize, usize)> = Vec::with_capacity(raw.len() + 1);
+    // bounds[i] = (raw_byte_offset, norm_byte_length_of_prefix_up_to_that_offset).
+    // Norm lengths are non-decreasing, so binary search is valid.
+    // We stop normalizing prefixes once we pass the last match position.
+    let raw_chars: Vec<(usize, char)> = raw.char_indices().collect();
+    let mut bounds: Vec<(usize, usize)> = Vec::with_capacity(raw_chars.len() + 1);
     bounds.push((0, 0));
-    for (idx, ch) in raw.char_indices() {
+    let max_norm_offset = ranges.iter().map(|&(_, e)| e).max().unwrap_or(0);
+    for &(idx, ch) in &raw_chars {
         let raw_end = idx + ch.len_utf8();
-        bounds.push((raw_end, normalizer.normalize(&raw[..raw_end]).len()));
+        let norm_len = normalizer.normalize(&raw[..raw_end]).len();
+        bounds.push((raw_end, norm_len));
+        if norm_len >= max_norm_offset {
+            // Past the last match — fill remaining entries without normalizing.
+            for &(idx2, ch2) in &raw_chars[(bounds.len() - 1)..] {
+                bounds.push((idx2 + ch2.len_utf8(), norm_len));
+            }
+            break;
+        }
     }
 
     // Largest raw boundary whose prefix normalizes to at most `norm_off` bytes.
     let start_for = |norm_off: usize| -> usize {
-        let mut raw_off = 0;
-        for &(r, n) in &bounds {
-            if n <= norm_off {
-                raw_off = r;
-            } else {
-                break;
-            }
-        }
-        raw_off
+        let idx = bounds.partition_point(|&(_, n)| n <= norm_off);
+        if idx == 0 { 0 } else { bounds[idx - 1].0 }
     };
     // Smallest raw boundary whose prefix normalizes to at least `norm_off` bytes.
     let end_for = |norm_off: usize| -> usize {
-        bounds
-            .iter()
-            .find(|&&(_, n)| n >= norm_off)
-            .map_or(raw.len(), |&(r, _)| r)
+        let idx = bounds.partition_point(|&(_, n)| n < norm_off);
+        if idx >= bounds.len() {
+            raw.len()
+        } else {
+            bounds[idx].0
+        }
     };
 
     let extra = ranges.len() * (before.len() + after.len());
     let mut out = String::with_capacity(raw.len() + extra);
     let mut prev_end = 0;
     for (ns, ne) in ranges {
-        // Clamp against the previous match so overlapping maps never slice
-        // backwards (defensive; ranges in `norm` are non-overlapping).
         let rs = start_for(ns).max(prev_end);
         let re = end_for(ne).max(rs);
         out.push_str(&raw[prev_end..rs]);
