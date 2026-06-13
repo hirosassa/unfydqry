@@ -17,6 +17,13 @@ on:
     paths:
       - "core/**"
       - ".github/workflows/rust-bench.yml"
+  # GitHub evicts any cache not read for 7 days. If main goes quiet, the primed
+  # cache would disappear and PRs go cold again. Re-prime twice a week (max
+  # ~3-4 day gap) to stay comfortably inside that window — a strict 7-day cron
+  # would race the eviction. Scheduled runs fire only from the default branch,
+  # so this takes effect once merged to main.
+  schedule:
+    - cron: "0 6 * * 1,4"
   workflow_dispatch:
 
 # Only the latest run per PR matters; cancel superseded ones.
