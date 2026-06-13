@@ -115,10 +115,14 @@ fn bench_index_batch(c: &mut Criterion) {
             .collect();
 
         group.bench_with_input(BenchmarkId::from_parameter(n), &items, |b, items| {
-            b.iter(|| {
-                let engine = SearchEngine::new(":memory:".to_string()).unwrap();
-                engine.index_batch(items.clone()).unwrap();
-            });
+            b.iter_batched(
+                || items.clone(),
+                |batch| {
+                    let engine = SearchEngine::new(":memory:".to_string()).unwrap();
+                    engine.index_batch(batch).unwrap();
+                },
+                criterion::BatchSize::SmallInput,
+            );
         });
     }
     group.finish();
