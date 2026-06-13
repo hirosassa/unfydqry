@@ -791,7 +791,7 @@ impl SearchEngine {
 
         // Load every row, then validate the whole set fits the new encoding
         // before mutating anything.
-        let rows: Vec<(i64, String, Option<String>)> = {
+        let mut rows: Vec<(i64, String, Option<String>)> = {
             let mut stmt = conn.prepare("SELECT id, norm, raw FROM entries")?;
             let mapped = stmt.query_map([], |r| {
                 Ok((
@@ -802,8 +802,9 @@ impl SearchEngine {
             })?;
             mapped.collect::<Result<Vec<_>, _>>()?
         };
-        let mut repacked: Vec<(i64, String, Option<String>)> = Vec::with_capacity(rows.len());
-        for (old_id, norm, raw) in rows {
+        // Validate and re-pack ids in place to avoid a second allocation.
+        for (id, _, _) in &mut rows {
+            let old_id = *id;
             if old_id < 0 {
                 return Err(SearchError::Db(format!(
                     "id {old_id} is not a packed record id; cannot change field_bits"
@@ -821,16 +822,13 @@ impl SearchEngine {
                     "record id {record} does not fit in field_bits {new_field_bits}"
                 )));
             }
-            repacked.push(((record << new_field_bits) | slot, norm, raw));
+            *id = (record << new_field_bits) | slot;
         }
 
-        // Re-pack in one transaction: clear, then re-insert with the new ids.
-        // A wholesale rewrite avoids transient primary-key collisions that
-        // row-by-row id updates would hit when ranges overlap.
         let tx = conn.unchecked_transaction()?;
         tx.execute("DELETE FROM docs", [])?;
         tx.execute("DELETE FROM entries", [])?;
-        for (new_id, norm, raw) in &repacked {
+        for (new_id, norm, raw) in &rows {
             tx.execute(
                 "INSERT INTO docs(rowid, norm) VALUES (?1, ?2)",
                 params![new_id, norm],
@@ -843,7 +841,7 @@ impl SearchEngine {
         Self::stamp_field_bits(&tx, new_field_bits)?;
         tx.commit()?;
         self.field_bits.store(new_field_bits, Ordering::Relaxed);
-        Ok(repacked.len() as u64)
+        Ok(rows.len() as u64)
     }
 }
 
