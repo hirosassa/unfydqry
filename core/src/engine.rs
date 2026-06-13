@@ -825,6 +825,60 @@ impl SearchEngine {
         Ok(out)
     }
 
+    /// Returns the highlighted text for a specific field of a record.
+    ///
+    /// This is a convenience wrapper around `highlight` that computes the
+    /// packed id from `(record_id, slot)`.
+    pub fn highlight_record(
+        &self,
+        query: String,
+        record_id: i64,
+        slot: u8,
+        before: String,
+        after: String,
+    ) -> Result<Option<String>, SearchError> {
+        let bits = self.field_bits();
+        let packed = (record_id << bits) | i64::from(slot);
+        self.highlight(query, packed, before, after)
+    }
+
+    /// Returns the total number of *records* matching `query`.
+    ///
+    /// Unlike `match_count` (which counts documents / fields), this collapses
+    /// field hits to unique record ids, matching the semantics of
+    /// `search_records`.
+    pub fn match_count_records(
+        &self,
+        query: String,
+        fields_per_record: u32,
+    ) -> Result<u64, SearchError> {
+        let results = self.search_records(query, u32::MAX, fields_per_record)?;
+        Ok(results.len() as u64)
+    }
+
+    /// Returns a single page of record-level search results (0-indexed).
+    ///
+    /// Combines `search_records` semantics with pagination. Page 0 with a
+    /// given `per_page` returns the same results as
+    /// `search_records(query, per_page, fields_per_record)`.
+    pub fn search_records_page(
+        &self,
+        query: String,
+        per_page: u32,
+        page: u32,
+        fields_per_record: u32,
+    ) -> Result<Vec<RecordHit>, SearchError> {
+        let offset = page.checked_mul(per_page).ok_or_else(|| {
+            SearchError::Db(format!("page {page} * per_page {per_page} overflows u32"))
+        })? as usize;
+        let total_limit = per_page.saturating_add(page.saturating_mul(per_page));
+        let mut all = self.search_records(query, total_limit, fields_per_record)?;
+        let drain_to = offset.min(all.len());
+        all.drain(..drain_to);
+        all.truncate(per_page as usize);
+        Ok(all)
+    }
+
     /// Re-packs every stored id from the index's current `field_bits` to
     /// `new_field_bits`, rebuilding the id encoding in place. Returns the
     /// number of documents repacked.
@@ -2177,5 +2231,95 @@ mod tests {
     fn contains_record_rejects_out_of_range() {
         let e = fresh();
         assert!(matches!(e.contains_record(-1), Err(SearchError::Db(_))));
+    }
+
+    // --- record-layer: highlight_record ---
+
+    #[test]
+    fn highlight_record_wraps_matching_field() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "サーバー管理"), fv(1, "おおさか")])
+            .unwrap();
+
+        let result = e
+            .highlight_record("さーばー".into(), 1, 0, "[".into(), "]".into())
+            .unwrap();
+        assert!(result.is_some());
+        let hl = result.unwrap();
+        assert!(hl.contains('['), "expected marker in '{hl}'");
+    }
+
+    #[test]
+    fn highlight_record_nonexistent_slot_returns_none() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "hello")]).unwrap();
+
+        let result = e
+            .highlight_record("hello".into(), 1, 5, "[".into(), "]".into())
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    // --- record-layer: match_count_records ---
+
+    #[test]
+    fn match_count_records_counts_unique_records() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "とうきょう"), fv(1, "首都")])
+            .unwrap();
+        e.index_record(2, vec![fv(0, "おおさか"), fv(1, "とうきょう より西")])
+            .unwrap();
+        e.index_record(3, vec![fv(0, "なごや")]).unwrap();
+
+        assert_eq!(e.match_count_records("とうきょう".into(), 2).unwrap(), 2);
+        assert_eq!(e.match_count_records("なごや".into(), 2).unwrap(), 1);
+        assert_eq!(e.match_count_records("xyz".into(), 2).unwrap(), 0);
+    }
+
+    #[test]
+    fn match_count_records_empty_query_returns_zero() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "hello")]).unwrap();
+        assert_eq!(e.match_count_records("".into(), 1).unwrap(), 0);
+    }
+
+    // --- record-layer: search_records_page ---
+
+    #[test]
+    fn search_records_page_paginates() {
+        let e = fresh();
+        for i in 1..=5 {
+            e.index_record(i, vec![fv(0, &format!("とうきょう レコード{i}"))])
+                .unwrap();
+        }
+
+        let page0 = e.search_records_page("とうきょう".into(), 2, 0, 1).unwrap();
+        let page1 = e.search_records_page("とうきょう".into(), 2, 1, 1).unwrap();
+        let page2 = e.search_records_page("とうきょう".into(), 2, 2, 1).unwrap();
+
+        assert_eq!(page0.len(), 2);
+        assert_eq!(page1.len(), 2);
+        assert_eq!(page2.len(), 1);
+
+        let ids0: Vec<i64> = page0.iter().map(|h| h.record_id).collect();
+        let ids1: Vec<i64> = page1.iter().map(|h| h.record_id).collect();
+        assert!(ids0.iter().all(|id| !ids1.contains(id)));
+    }
+
+    #[test]
+    fn search_records_page_zero_equals_search_records() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "とうきょう")]).unwrap();
+        e.index_record(2, vec![fv(0, "おおさか")]).unwrap();
+
+        let all = e.search_records("とうきょう".into(), 10, 1).unwrap();
+        let page0 = e
+            .search_records_page("とうきょう".into(), 10, 0, 1)
+            .unwrap();
+
+        assert_eq!(all.len(), page0.len());
+        for (a, p) in all.iter().zip(page0.iter()) {
+            assert_eq!(a.record_id, p.record_id);
+        }
     }
 }

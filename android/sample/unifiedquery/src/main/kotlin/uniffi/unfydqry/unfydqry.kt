@@ -656,11 +656,15 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_highlight(
     ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_highlight_record(
+    ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_index(
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_index_record(
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_match_count(
+    ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_match_count_records(
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_reindex(
     ): Short
@@ -675,6 +679,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_unfydqry_checksum_method_searchengine_search_page(
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_search_records(
+    ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_search_records_page(
     ): Short
     external fun uniffi_unfydqry_checksum_constructor_searchengine_new(
     ): Short
@@ -728,11 +734,15 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_unfydqry_fn_method_searchengine_highlight(`ptr`: Long,`query`: RustBuffer.ByValue,`id`: Long,`before`: RustBuffer.ByValue,`after`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_unfydqry_fn_method_searchengine_highlight_record(`ptr`: Long,`query`: RustBuffer.ByValue,`recordId`: Long,`slot`: Byte,`before`: RustBuffer.ByValue,`after`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_unfydqry_fn_method_searchengine_index(`ptr`: Long,`id`: Long,`text`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_unfydqry_fn_method_searchengine_index_record(`ptr`: Long,`recordId`: Long,`fields`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_unfydqry_fn_method_searchengine_match_count(`ptr`: Long,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
+    external fun uniffi_unfydqry_fn_method_searchengine_match_count_records(`ptr`: Long,`query`: RustBuffer.ByValue,`fieldsPerRecord`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_unfydqry_fn_method_searchengine_reindex(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
@@ -747,6 +757,8 @@ internal object UniffiLib {
     external fun uniffi_unfydqry_fn_method_searchengine_search_page(`ptr`: Long,`query`: RustBuffer.ByValue,`perPage`: Int,`page`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_unfydqry_fn_method_searchengine_search_records(`ptr`: Long,`query`: RustBuffer.ByValue,`limit`: Int,`fieldsPerRecord`: Int,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_unfydqry_fn_method_searchengine_search_records_page(`ptr`: Long,`query`: RustBuffer.ByValue,`perPage`: Int,`page`: Int,`fieldsPerRecord`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_unfydqry_fn_func_normalizeloose(`input`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -907,6 +919,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_unfydqry_checksum_method_searchengine_highlight() != 44743.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_highlight_record() != 29451.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_index() != 46744.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -914,6 +929,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_match_count() != 11745.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_match_count_records() != 51383.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_reindex() != 24527.toShort()) {
@@ -935,6 +953,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_search_records() != 63653.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_search_records_page() != 50102.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_constructor_searchengine_new() != 23373.toShort()) {
@@ -1484,6 +1505,14 @@ public interface SearchEngineInterface {
     fun `highlight`(`query`: kotlin.String, `id`: kotlin.Long, `before`: kotlin.String, `after`: kotlin.String): kotlin.String?
     
     /**
+     * Returns the highlighted text for a specific field of a record.
+     *
+     * This is a convenience wrapper around `highlight` that computes the
+     * packed id from `(record_id, slot)`.
+     */
+    fun `highlightRecord`(`query`: kotlin.String, `recordId`: kotlin.Long, `slot`: kotlin.UByte, `before`: kotlin.String, `after`: kotlin.String): kotlin.String?
+    
+    /**
      * Adds, or replaces, the document stored under `id`.
      *
      * The host passes raw `text`; normalization runs inside the engine, so the
@@ -1512,6 +1541,15 @@ public interface SearchEngineInterface {
      * or whitespace-only queries.
      */
     fun `matchCount`(`query`: kotlin.String): kotlin.ULong
+    
+    /**
+     * Returns the total number of *records* matching `query`.
+     *
+     * Unlike `match_count` (which counts documents / fields), this collapses
+     * field hits to unique record ids, matching the semantics of
+     * `search_records`.
+     */
+    fun `matchCountRecords`(`query`: kotlin.String, `fieldsPerRecord`: kotlin.UInt): kotlin.ULong
     
     /**
      * Regenerates the index by re-normalizing every stored document's raw text
@@ -1571,6 +1609,15 @@ public interface SearchEngineInterface {
      * normalized) query returns no records.
      */
     fun `searchRecords`(`query`: kotlin.String, `limit`: kotlin.UInt, `fieldsPerRecord`: kotlin.UInt): List<RecordHit>
+    
+    /**
+     * Returns a single page of record-level search results (0-indexed).
+     *
+     * Combines `search_records` semantics with pagination. Page 0 with a
+     * given `per_page` returns the same results as
+     * `search_records(query, per_page, fields_per_record)`.
+     */
+    fun `searchRecordsPage`(`query`: kotlin.String, `perPage`: kotlin.UInt, `page`: kotlin.UInt, `fieldsPerRecord`: kotlin.UInt): List<RecordHit>
     
     companion object
 }
@@ -1807,6 +1854,26 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
 
     
     /**
+     * Returns the highlighted text for a specific field of a record.
+     *
+     * This is a convenience wrapper around `highlight` that computes the
+     * packed id from `(record_id, slot)`.
+     */
+    @Throws(SearchException::class)override fun `highlightRecord`(`query`: kotlin.String, `recordId`: kotlin.Long, `slot`: kotlin.UByte, `before`: kotlin.String, `after`: kotlin.String): kotlin.String? {
+            return FfiConverterOptionalString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_highlight_record(
+        it,
+        FfiConverterString.lower(`query`),FfiConverterLong.lower(`recordId`),FfiConverterUByte.lower(`slot`),FfiConverterString.lower(`before`),FfiConverterString.lower(`after`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * Adds, or replaces, the document stored under `id`.
      *
      * The host passes raw `text`; normalization runs inside the engine, so the
@@ -1863,6 +1930,27 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
     UniffiLib.uniffi_unfydqry_fn_method_searchengine_match_count(
         it,
         FfiConverterString.lower(`query`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Returns the total number of *records* matching `query`.
+     *
+     * Unlike `match_count` (which counts documents / fields), this collapses
+     * field hits to unique record ids, matching the semantics of
+     * `search_records`.
+     */
+    @Throws(SearchException::class)override fun `matchCountRecords`(`query`: kotlin.String, `fieldsPerRecord`: kotlin.UInt): kotlin.ULong {
+            return FfiConverterULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_match_count_records(
+        it,
+        FfiConverterString.lower(`query`),FfiConverterUInt.lower(`fieldsPerRecord`),_status)
 }
     }
     )
@@ -2004,6 +2092,27 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
     UniffiLib.uniffi_unfydqry_fn_method_searchengine_search_records(
         it,
         FfiConverterString.lower(`query`),FfiConverterUInt.lower(`limit`),FfiConverterUInt.lower(`fieldsPerRecord`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Returns a single page of record-level search results (0-indexed).
+     *
+     * Combines `search_records` semantics with pagination. Page 0 with a
+     * given `per_page` returns the same results as
+     * `search_records(query, per_page, fields_per_record)`.
+     */
+    @Throws(SearchException::class)override fun `searchRecordsPage`(`query`: kotlin.String, `perPage`: kotlin.UInt, `page`: kotlin.UInt, `fieldsPerRecord`: kotlin.UInt): List<RecordHit> {
+            return FfiConverterSequenceTypeRecordHit.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_search_records_page(
+        it,
+        FfiConverterString.lower(`query`),FfiConverterUInt.lower(`perPage`),FfiConverterUInt.lower(`page`),FfiConverterUInt.lower(`fieldsPerRecord`),_status)
 }
     }
     )
