@@ -41,3 +41,7 @@ harness = false
 [[bench]]
 name = "index"
 harness = false
+
+[[bench]]
+name = "highlight"
+harness = false
