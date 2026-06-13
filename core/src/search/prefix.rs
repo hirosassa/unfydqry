@@ -29,7 +29,7 @@ fn prefix_upper_bound(s: &str) -> Option<String> {
 }
 
 /// Runs a prefix range query with the given SELECT prefix and trailing SQL
-/// (e.g. `"LIMIT ?3"` or `"LIMIT ?3 OFFSET ?4"`), binding `extra_params`
+/// (e.g. `"LIMIT ?"` or `"LIMIT ? OFFSET ?"`), binding `extra_params`
 /// after the range parameters.
 fn prefix_query(
     conn: &Connection,

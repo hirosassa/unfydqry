@@ -47,7 +47,12 @@ pub trait SearchAlgorithm: Send + Sync {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<Hit>, SearchError> {
-        let total = limit.saturating_add(offset);
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let total = limit.checked_add(offset).ok_or_else(|| {
+            SearchError::Db(format!("limit {limit} + offset {offset} overflows u32"))
+        })?;
         let mut hits = self.search(conn, query, total)?;
         let drain_to = (offset as usize).min(hits.len());
         hits.drain(..drain_to);

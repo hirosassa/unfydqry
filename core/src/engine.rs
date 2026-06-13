@@ -567,7 +567,9 @@ impl SearchEngine {
         if q.is_empty() {
             return Ok(Vec::new());
         }
-        let offset = page.saturating_mul(per_page);
+        let offset = page.checked_mul(per_page).ok_or_else(|| {
+            SearchError::Db(format!("page {page} * per_page {per_page} overflows u32"))
+        })?;
         let conn = self.conn.lock().unwrap();
         self.strategy.search_paged(&conn, &q, per_page, offset)
     }
