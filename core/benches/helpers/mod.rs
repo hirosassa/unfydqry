@@ -72,6 +72,25 @@ impl Lcg {
     }
 }
 
+/// Document corpus sizes used across the corpus-scaled benchmarks.
+///
+/// Defaults to the full set. CI overrides it via `BENCH_DOC_COUNTS`
+/// (comma-separated, e.g. `100,1000`) to drop the heavy 10k tier and keep the
+/// run within a usable wall-clock time, while local runs stay full-fidelity.
+pub fn doc_counts() -> Vec<usize> {
+    match std::env::var("BENCH_DOC_COUNTS") {
+        Ok(s) if !s.trim().is_empty() => s
+            .split(',')
+            .map(|part| {
+                part.trim()
+                    .parse()
+                    .expect("BENCH_DOC_COUNTS must be comma-separated integers")
+            })
+            .collect(),
+        _ => vec![100, 1_000, 10_000],
+    }
+}
+
 /// Generates `n` deterministic documents, each containing 2-4 words from the
 /// fixed word list. The same `n` always produces the same documents.
 pub fn generate_docs(n: usize) -> Vec<String> {
