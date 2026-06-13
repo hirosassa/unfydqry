@@ -13,8 +13,14 @@ Enable the repository git hooks (they enforce formatting, binding regeneration,
 and pre-push CI gates):
 
 ```sh
-git config core.hooksPath .githooks
+make setup     # = git config core.hooksPath .githooks
 ```
+
+`core.hooksPath` is *local* git config and is **not** carried by `clone` or
+`pull`, so run this once per clone — including if you cloned before the hooks
+existed. The everyday targets (`make check` / `make ci` / `make gen-bindings`)
+also self-heal by running `ensure-hooks` first, so the hooks get wired up
+automatically the next time you use the normal workflow.
 
 You need a Rust toolchain with the `aarch64-apple-darwin` target available for
 binding regeneration (macOS), plus the per-platform toolchains if you touch
@@ -50,6 +56,7 @@ This is what keeps iOS and Android behaviour identical by construction. See
 
 | Target | What it does |
 | --- | --- |
+| `make setup` | Configure this clone for development (enables the git hooks). |
 | `make fmt` | Format the Rust core in place. |
 | `make check` | `fmt-check` + `clippy` + `test`. |
 | `make gen-bindings` | Regenerate the committed Swift + Kotlin bindings. |

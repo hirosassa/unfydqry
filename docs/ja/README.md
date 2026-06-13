@@ -453,7 +453,8 @@ cd flutter/example && flutter run
 共通作業合意は [AGENTS.md](AGENTS.md) に、セットアップ手順は
 [CONTRIBUTING.md](CONTRIBUTING.md) にある。要点: 挙動の変更は `core/` に入れ、
 Swift/Kotlin バインディングは生成物（`make gen-bindings`、手編集禁止）であり、push 前に
-`make ci` を通すこと。フックは `git config core.hooksPath .githooks` で一度だけ有効化する。
+`make ci` を通すこと。フックはクローンごとに `make setup` で一度だけ有効化する
+（`core.hooksPath` はローカル設定で clone/pull では引き継がれない）。
 
 ## ライセンス
 

@@ -98,8 +98,15 @@ You do not have to remember all of the above — the repo enforces the load-bear
 parts. Enable the git hooks once per clone:
 
 ```sh
-git config core.hooksPath .githooks
+make setup     # = git config core.hooksPath .githooks
 ```
+
+`core.hooksPath` is *local* git config — it is **not** carried by `clone` or
+`pull`, so each clone must enable it once (anyone who cloned before the hooks
+existed is not covered until they do). As a safety net, the day-to-day targets
+(`make check` / `make ci` / `make gen-bindings`) self-heal: they run
+`ensure-hooks` first, so the hooks get wired up automatically the next time you
+use the normal workflow.
 
 | Mechanism | What it enforces |
 | --- | --- |

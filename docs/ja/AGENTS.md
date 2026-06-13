@@ -96,8 +96,14 @@ git add ios/Sources/UnifiedQuery/UnifiedQuery.swift \
 クローンごとに一度だけ git フックを有効化してください:
 
 ```sh
-git config core.hooksPath .githooks
+make setup     # = git config core.hooksPath .githooks
 ```
+
+`core.hooksPath` は*ローカル*の git 設定であり、`clone` や `pull` では**引き継がれ
+ません**。そのためクローンごとに一度有効化が必要です（フックが存在する前にクローン
+した人は、有効化するまで対象外）。安全網として、日常のターゲット（`make check` /
+`make ci` / `make gen-bindings`）は先頭で `ensure-hooks` を実行する自己修復を行うため、
+通常のワークフローを次に使った時点でフックが自動的に設定されます。
 
 | 仕組み | 何を強制するか |
 | --- | --- |
