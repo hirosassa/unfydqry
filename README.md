@@ -524,6 +524,16 @@ cd flutter && flutter test
 cd flutter/example && flutter run
 ```
 
+## Contributing
+
+Humans and AI agents work in this repository in parallel. The shared working
+agreement that keeps that collision- and regression-free lives in
+[AGENTS.md](AGENTS.md); the setup walkthrough is in
+[CONTRIBUTING.md](CONTRIBUTING.md). In short: behaviour changes go in `core/`,
+the Swift/Kotlin bindings are generated (`make gen-bindings`, never hand-edited),
+and `make ci` must pass before pushing. Run `make setup` once per clone to enable
+the repo hooks (`core.hooksPath` is local config and isn't carried by clone/pull).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
