@@ -648,6 +648,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_change_field_bits(
     ): Short
+    external fun uniffi_unfydqry_checksum_method_searchengine_document_count(
+    ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_highlight(
     ): Short
     external fun uniffi_unfydqry_checksum_method_searchengine_index(
@@ -711,6 +713,8 @@ internal object UniffiLib {
     external fun uniffi_unfydqry_fn_constructor_searchengine_withoptionsrebuilding(`dbPath`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_unfydqry_fn_method_searchengine_change_field_bits(`ptr`: Long,`newFieldBits`: Byte,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
+    external fun uniffi_unfydqry_fn_method_searchengine_document_count(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_unfydqry_fn_method_searchengine_highlight(`ptr`: Long,`query`: RustBuffer.ByValue,`id`: Long,`before`: RustBuffer.ByValue,`after`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -877,6 +881,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_change_field_bits() != 28105.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_document_count() != 24388.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_highlight() != 44743.toShort()) {
@@ -1419,6 +1426,11 @@ public interface SearchEngineInterface {
     fun `changeFieldBits`(`newFieldBits`: kotlin.UByte): kotlin.ULong
     
     /**
+     * Returns the total number of documents in the index.
+     */
+    fun `documentCount`(): kotlin.ULong
+    
+    /**
      * Returns the host's original text for the document at `id` with the
      * regions matching `query` wrapped in `before`/`after` markers.
      *
@@ -1660,6 +1672,23 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
     UniffiLib.uniffi_unfydqry_fn_method_searchengine_change_field_bits(
         it,
         FfiConverterUByte.lower(`newFieldBits`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Returns the total number of documents in the index.
+     */
+    @Throws(SearchException::class)override fun `documentCount`(): kotlin.ULong {
+            return FfiConverterULong.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SearchException) { _status ->
+    UniffiLib.uniffi_unfydqry_fn_method_searchengine_document_count(
+        it,
+        _status)
 }
     }
     )

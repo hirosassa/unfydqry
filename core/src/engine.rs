@@ -574,6 +574,13 @@ impl SearchEngine {
         self.strategy.search_paged(&conn, &q, per_page, offset)
     }
 
+    /// Returns the total number of documents in the index.
+    pub fn document_count(&self) -> Result<u64, SearchError> {
+        let conn = self.conn.lock().unwrap();
+        let c: u64 = conn.query_row("SELECT COUNT(*) FROM entries", [], |r| r.get(0))?;
+        Ok(c)
+    }
+
     /// Returns the total number of documents matching `query`, without a limit.
     ///
     /// This is useful for displaying "About N results" in search UIs. The
@@ -1974,5 +1981,39 @@ mod tests {
         if !page1.is_empty() {
             assert_ne!(page0[0].id, page1[0].id);
         }
+    }
+
+    // --- document_count ---
+
+    #[test]
+    fn document_count_empty_index() {
+        let e = fresh();
+        assert_eq!(e.document_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn document_count_after_indexing() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+        e.index(2, "world".into()).unwrap();
+        assert_eq!(e.document_count().unwrap(), 2);
+    }
+
+    #[test]
+    fn document_count_after_remove() {
+        let e = fresh();
+        e.index(1, "hello".into()).unwrap();
+        e.index(2, "world".into()).unwrap();
+        e.remove(1).unwrap();
+        assert_eq!(e.document_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn document_count_with_record_layer() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "hello"), fv(1, "world")])
+            .unwrap();
+        // Two fields = two entries in the index.
+        assert_eq!(e.document_count().unwrap(), 2);
     }
 }
