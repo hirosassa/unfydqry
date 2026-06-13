@@ -610,6 +610,11 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
     func changeFieldBits(newFieldBits: UInt8) throws  -> UInt64
     
     /**
+     * Returns the total number of documents in the index.
+     */
+    func documentCount() throws  -> UInt64
+    
+    /**
      * Returns the host's original text for the document at `id` with the
      * regions matching `query` wrapped in `before`/`after` markers.
      *
@@ -869,6 +874,17 @@ open func changeFieldBits(newFieldBits: UInt8)throws  -> UInt64  {
     uniffi_unfydqry_fn_method_searchengine_change_field_bits(
             self.uniffiCloneHandle(),
         FfiConverterUInt8.lower(newFieldBits),$0
+    )
+})
+}
+    
+    /**
+     * Returns the total number of documents in the index.
+     */
+open func documentCount()throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
+    uniffi_unfydqry_fn_method_searchengine_document_count(
+            self.uniffiCloneHandle(),$0
     )
 })
 }
@@ -2286,6 +2302,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_change_field_bits() != 28105) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_unfydqry_checksum_method_searchengine_document_count() != 24388) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_highlight() != 44743) {

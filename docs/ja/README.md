@@ -221,6 +221,60 @@ val snippet = engine.highlight("検索", 1L, "<b>", "</b>")
 
 > **補足:** 生テキストを保持する前にインデックスされたドキュメントには写し戻す生テキストが無いため、それらは正規化済みテキストに直接マークする。
 
+### マッチ数の取得
+
+`matchCount(query)` は、クエリにマッチするドキュメントの総数を limit なしで返す。「約 N 件の結果」のような UI パターンに便利。
+
+```swift
+// iOS
+let total = try engine.matchCount(query: "とうきょう")
+// → 42
+```
+
+```kotlin
+// Android
+val total = engine.matchCount("とうきょう")
+// → 42
+```
+
+空またはホワイトスペースのみのクエリでは `0` を返す。SQL ベースの戦略は効率的な `SELECT COUNT(*)` を使い、Rust 側の fuzzy / edit-distance 戦略はフルマッチングパスを内部で実行する。
+
+### ページネーション
+
+`searchPage(query, perPage, page)` は 0 始まりのページ単位で結果を返す。`matchCount` と組み合わせてページネーション UI を構築できる。
+
+```swift
+// iOS
+let total = try engine.matchCount(query: "とうきょう")
+let page0 = try engine.searchPage(query: "とうきょう", perPage: 20, page: 0)
+let page1 = try engine.searchPage(query: "とうきょう", perPage: 20, page: 1)
+```
+
+```kotlin
+// Android
+val total = engine.matchCount("とうきょう")
+val page0 = engine.searchPage("とうきょう", 20u, 0u)
+val page1 = engine.searchPage("とうきょう", 20u, 1u)
+```
+
+page 0 は `search(query, perPage)` と同じ結果を返す。結果を超えたページは空リストを返す。
+
+### インデックス統計
+
+`documentCount()` はインデックス内のドキュメント総数を返す。
+
+```swift
+// iOS
+let count = try engine.documentCount()
+```
+
+```kotlin
+// Android
+val count = engine.documentCount()
+```
+
+record-layer API を使用している場合、各フィールドが個別のドキュメントとして格納されるため、全レコードのフィールド数の合計が返る。
+
 ## 複数フィールドのレコード(record-layer API)
 
 `index` / `search` は各 `id` を単一のテキスト塊として扱う。レコードが複数の検索対象フィールド(連絡先の名前・よみ・メモなど)を持つ場合、**record-layer API** は各フィールドを個別にインデックスしつつ、結果はレコード単位で1件ずつ返す。これにより、クエリは*どのフィールドにでも*マッチでき、かつ*どのフィールド*が一致したかも分かる。
