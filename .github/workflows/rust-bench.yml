@@ -79,12 +79,18 @@ jobs:
       # The base commit is immutable, so its baseline only changes when the PR's
       # target branch advances. Key the cache on base.sha: pushing new commits to
       # the PR reuses it and skips the (re)compile + bench of the base entirely.
+      #
+      # Only base.sha varies here — the cache step runs before checkout, so
+      # hashFiles() can't see the repo, and cache keys reject commas (ruling out
+      # BENCH_DOC_COUNTS). Bump the trailing version token by hand whenever the
+      # bench config (CRITERION_ARGS / BENCH_DOC_COUNTS / BENCHES) changes, so a
+      # stale base baseline isn't reused against freshly-measured PR numbers.
       - name: Restore base baseline cache
         id: cache-base
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: core/target/criterion
-          key: criterion-base-${{ github.event.pull_request.base.sha }}-${{ env.BENCH_DOC_COUNTS }}-${{ hashFiles('.github/workflows/rust-bench.yml') }}
+          key: criterion-base-${{ github.event.pull_request.base.sha }}-v1
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         if: steps.cache-base.outputs.cache-hit != 'true'
