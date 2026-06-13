@@ -5,6 +5,18 @@ on:
     paths:
       - "core/**"
       - ".github/workflows/rust-bench.yml"
+  # Push to the default branch primes the shared rust-cache (see `shared-key`
+  # below). GitHub Actions only lets a branch restore caches from its own
+  # history, the base branch, or the default branch — never a sibling PR
+  # branch. So without a cache built on main, every new PR branch's first run
+  # recompiles all dependencies (notably the bundled SQLite C amalgamation,
+  # the bulk of the ~14 min cold build) from scratch. Building once per merge
+  # to main lets every PR restore those compiled deps instead.
+  push:
+    branches: [main]
+    paths:
+      - "core/**"
+      - ".github/workflows/rust-bench.yml"
   workflow_dispatch:
 
 # Only the latest run per PR matters; cancel superseded ones.
@@ -57,6 +69,11 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: core
+          # One shared cache scope across bench-pr, bench-base, and the main
+          # priming run — so a PR restores the deps compiled on main rather
+          # than rebuilding them. (Default keying segments per job name, which
+          # would give each job its own cold cache.)
+          shared-key: bench
 
       - name: Bench PR
         working-directory: core
@@ -108,6 +125,7 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: core
+          shared-key: bench
 
       # The base branch may predate the benchmarks (or a given bench). Don't fail
       # the pipeline in that case — the compare job just won't find a baseline.
