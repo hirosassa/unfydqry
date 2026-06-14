@@ -687,9 +687,10 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
     /**
      * Returns the total number of *records* matching `query`.
      *
-     * Unlike `match_count` (which counts documents / fields), this collapses
-     * field hits to unique record ids, matching the semantics of
-     * `search_records`.
+     * Unlike the per-document count, this collapses field hits to unique
+     * record ids, matching the semantics of the record-level search.
+     * `fields_per_record` is used as a capacity hint for the internal
+     * deduplication set.
      */
     func matchCountRecords(query: String, fieldsPerRecord: UInt32) throws  -> UInt64
     
@@ -755,9 +756,9 @@ public protocol SearchEngineProtocol: AnyObject, Sendable {
     /**
      * Returns a single page of record-level search results (0-indexed).
      *
-     * Combines `search_records` semantics with pagination. Page 0 with a
-     * given `per_page` returns the same results as
-     * `search_records(query, per_page, fields_per_record)`.
+     * Combines record-level search semantics with pagination. Page 0 with a
+     * given `per_page` returns the same results as the unpaginated record
+     * search.
      */
     func searchRecordsPage(query: String, perPage: UInt32, page: UInt32, fieldsPerRecord: UInt32) throws  -> [RecordHit]
     
@@ -1065,9 +1066,10 @@ open func matchCount(query: String)throws  -> UInt64  {
     /**
      * Returns the total number of *records* matching `query`.
      *
-     * Unlike `match_count` (which counts documents / fields), this collapses
-     * field hits to unique record ids, matching the semantics of
-     * `search_records`.
+     * Unlike the per-document count, this collapses field hits to unique
+     * record ids, matching the semantics of the record-level search.
+     * `fields_per_record` is used as a capacity hint for the internal
+     * deduplication set.
      */
 open func matchCountRecords(query: String, fieldsPerRecord: UInt32)throws  -> UInt64  {
     return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
@@ -1191,9 +1193,9 @@ open func searchRecords(query: String, limit: UInt32, fieldsPerRecord: UInt32)th
     /**
      * Returns a single page of record-level search results (0-indexed).
      *
-     * Combines `search_records` semantics with pagination. Page 0 with a
-     * given `per_page` returns the same results as
-     * `search_records(query, per_page, fields_per_record)`.
+     * Combines record-level search semantics with pagination. Page 0 with a
+     * given `per_page` returns the same results as the unpaginated record
+     * search.
      */
 open func searchRecordsPage(query: String, perPage: UInt32, page: UInt32, fieldsPerRecord: UInt32)throws  -> [RecordHit]  {
     return try  FfiConverterSequenceTypeRecordHit.lift(try rustCallWithError(FfiConverterTypeSearchError_lift) {
@@ -2471,7 +2473,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_unfydqry_checksum_method_searchengine_match_count() != 11745) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_method_searchengine_match_count_records() != 51383) {
+    if (uniffi_unfydqry_checksum_method_searchengine_match_count_records() != 38044) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_method_searchengine_reindex() != 24527) {
@@ -2495,7 +2497,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_unfydqry_checksum_method_searchengine_search_records() != 63653) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_unfydqry_checksum_method_searchengine_search_records_page() != 50102) {
+    if (uniffi_unfydqry_checksum_method_searchengine_search_records_page() != 28530) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_unfydqry_checksum_constructor_searchengine_new() != 23373) {

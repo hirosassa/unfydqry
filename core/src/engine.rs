@@ -854,13 +854,14 @@ impl SearchEngine {
 
     /// Returns the total number of *records* matching `query`.
     ///
-    /// Unlike `match_count` (which counts documents / fields), this collapses
-    /// field hits to unique record ids, matching the semantics of
-    /// `search_records`.
+    /// Unlike the per-document count, this collapses field hits to unique
+    /// record ids, matching the semantics of the record-level search.
+    /// `fields_per_record` is used as a capacity hint for the internal
+    /// deduplication set.
     pub fn match_count_records(
         &self,
         query: String,
-        #[allow(unused_variables)] fields_per_record: u32,
+        fields_per_record: u32,
     ) -> Result<u64, SearchError> {
         let q = self.normalizer.normalize(&query);
         if q.is_empty() {
@@ -871,7 +872,8 @@ impl SearchEngine {
             self.strategy.search(&conn, &q, u32::MAX)?
         };
         let bits = self.field_bits();
-        let mut seen = std::collections::HashSet::new();
+        let capacity = hits.len() / (fields_per_record.max(1) as usize);
+        let mut seen = std::collections::HashSet::with_capacity(capacity);
         for h in &hits {
             seen.insert(h.id >> bits);
         }
@@ -880,9 +882,9 @@ impl SearchEngine {
 
     /// Returns a single page of record-level search results (0-indexed).
     ///
-    /// Combines `search_records` semantics with pagination. Page 0 with a
-    /// given `per_page` returns the same results as
-    /// `search_records(query, per_page, fields_per_record)`.
+    /// Combines record-level search semantics with pagination. Page 0 with a
+    /// given `per_page` returns the same results as the unpaginated record
+    /// search.
     pub fn search_records_page(
         &self,
         query: String,

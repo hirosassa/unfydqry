@@ -931,7 +931,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_unfydqry_checksum_method_searchengine_match_count() != 11745.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_unfydqry_checksum_method_searchengine_match_count_records() != 51383.toShort()) {
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_match_count_records() != 38044.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_method_searchengine_reindex() != 24527.toShort()) {
@@ -955,7 +955,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_unfydqry_checksum_method_searchengine_search_records() != 63653.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_unfydqry_checksum_method_searchengine_search_records_page() != 50102.toShort()) {
+    if (lib.uniffi_unfydqry_checksum_method_searchengine_search_records_page() != 28530.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_unfydqry_checksum_constructor_searchengine_new() != 23373.toShort()) {
@@ -1545,9 +1545,10 @@ public interface SearchEngineInterface {
     /**
      * Returns the total number of *records* matching `query`.
      *
-     * Unlike `match_count` (which counts documents / fields), this collapses
-     * field hits to unique record ids, matching the semantics of
-     * `search_records`.
+     * Unlike the per-document count, this collapses field hits to unique
+     * record ids, matching the semantics of the record-level search.
+     * `fields_per_record` is used as a capacity hint for the internal
+     * deduplication set.
      */
     fun `matchCountRecords`(`query`: kotlin.String, `fieldsPerRecord`: kotlin.UInt): kotlin.ULong
     
@@ -1613,9 +1614,9 @@ public interface SearchEngineInterface {
     /**
      * Returns a single page of record-level search results (0-indexed).
      *
-     * Combines `search_records` semantics with pagination. Page 0 with a
-     * given `per_page` returns the same results as
-     * `search_records(query, per_page, fields_per_record)`.
+     * Combines record-level search semantics with pagination. Page 0 with a
+     * given `per_page` returns the same results as the unpaginated record
+     * search.
      */
     fun `searchRecordsPage`(`query`: kotlin.String, `perPage`: kotlin.UInt, `page`: kotlin.UInt, `fieldsPerRecord`: kotlin.UInt): List<RecordHit>
     
@@ -1940,9 +1941,10 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
     /**
      * Returns the total number of *records* matching `query`.
      *
-     * Unlike `match_count` (which counts documents / fields), this collapses
-     * field hits to unique record ids, matching the semantics of
-     * `search_records`.
+     * Unlike the per-document count, this collapses field hits to unique
+     * record ids, matching the semantics of the record-level search.
+     * `fields_per_record` is used as a capacity hint for the internal
+     * deduplication set.
      */
     @Throws(SearchException::class)override fun `matchCountRecords`(`query`: kotlin.String, `fieldsPerRecord`: kotlin.UInt): kotlin.ULong {
             return FfiConverterULong.lift(
@@ -2102,9 +2104,9 @@ open class SearchEngine: Disposable, AutoCloseable, SearchEngineInterface
     /**
      * Returns a single page of record-level search results (0-indexed).
      *
-     * Combines `search_records` semantics with pagination. Page 0 with a
-     * given `per_page` returns the same results as
-     * `search_records(query, per_page, fields_per_record)`.
+     * Combines record-level search semantics with pagination. Page 0 with a
+     * given `per_page` returns the same results as the unpaginated record
+     * search.
      */
     @Throws(SearchException::class)override fun `searchRecordsPage`(`query`: kotlin.String, `perPage`: kotlin.UInt, `page`: kotlin.UInt, `fieldsPerRecord`: kotlin.UInt): List<RecordHit> {
             return FfiConverterSequenceTypeRecordHit.lift(
