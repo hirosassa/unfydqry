@@ -860,10 +860,22 @@ impl SearchEngine {
     pub fn match_count_records(
         &self,
         query: String,
-        fields_per_record: u32,
+        #[allow(unused_variables)] fields_per_record: u32,
     ) -> Result<u64, SearchError> {
-        let results = self.search_records(query, u32::MAX, fields_per_record)?;
-        Ok(results.len() as u64)
+        let q = self.normalizer.normalize(&query);
+        if q.is_empty() {
+            return Ok(0);
+        }
+        let hits = {
+            let conn = self.conn.lock().unwrap();
+            self.strategy.search(&conn, &q, u32::MAX)?
+        };
+        let bits = self.field_bits();
+        let mut seen = std::collections::HashSet::new();
+        for h in &hits {
+            seen.insert(h.id >> bits);
+        }
+        Ok(seen.len() as u64)
     }
 
     /// Returns a single page of record-level search results (0-indexed).
@@ -880,12 +892,14 @@ impl SearchEngine {
     ) -> Result<Vec<RecordHit>, SearchError> {
         let offset = page.checked_mul(per_page).ok_or_else(|| {
             SearchError::Db(format!("page {page} * per_page {per_page} overflows u32"))
-        })? as usize;
-        let total_limit = offset.checked_add(per_page as usize).ok_or_else(|| {
-            SearchError::Db(format!("offset {offset} + per_page {per_page} overflows"))
-        })? as u32;
+        })?;
+        let total_limit = offset.checked_add(per_page).ok_or_else(|| {
+            SearchError::Db(format!(
+                "offset {offset} + per_page {per_page} overflows u32"
+            ))
+        })?;
         let mut all = self.search_records(query, total_limit, fields_per_record)?;
-        let drain_to = offset.min(all.len());
+        let drain_to = (offset as usize).min(all.len());
         all.drain(..drain_to);
         all.truncate(per_page as usize);
         Ok(all)
@@ -2350,11 +2364,22 @@ mod tests {
     }
 
     #[test]
-    fn search_records_page_overflow_errors() {
+    fn search_records_page_overflow_page_times_per_page() {
         let e = fresh();
         e.index_record(1, vec![fv(0, "hello")]).unwrap();
 
+        // page * per_page overflows u32
         let err = e.search_records_page("hello".into(), u32::MAX, u32::MAX, 1);
+        assert!(matches!(err, Err(SearchError::Db(_))));
+    }
+
+    #[test]
+    fn search_records_page_overflow_offset_plus_per_page() {
+        let e = fresh();
+        e.index_record(1, vec![fv(0, "hello")]).unwrap();
+
+        // offset (1 * u32::MAX) doesn't overflow, but offset + per_page does
+        let err = e.search_records_page("hello".into(), u32::MAX, 1, 1);
         assert!(matches!(err, Err(SearchError::Db(_))));
     }
 }
